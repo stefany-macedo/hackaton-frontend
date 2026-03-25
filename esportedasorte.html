@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Esporte da Sorte — Aposte com Inteligência</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<link rel="stylesheet" href="esportedasorte.css">
+</head>
+<body>
+
+<canvas id="particles-canvas"></canvas>
+
+<div class="toast" id="toast">
+  <span class="toast-icon">✓</span>
+  <span class="toast-msg" id="toast-msg">Aposta adicionada!</span>
+</div>
+
+<div class="screen active" id="screen-register">
+  <div class="auth-overlay"></div>
+  <div class="auth-card">
+    <div class="logo">
+      <img class="logo-img" src="assets/logo-esporte-da-sorte.png" alt="Esportes da Sorte" width="520" height="156" decoding="async">
+    </div>
+    <h1 class="auth-title">Crie sua conta</h1>
+    <p class="auth-sub">Comece a apostar em segundos</p>
+
+    <div class="input-row">
+      <div class="input-group">
+        <label>Nome</label>
+        <input type="text" id="reg-name" placeholder="João" oninput="validateField(this,'name')">
+        <span class="error-msg" id="err-name">Nome muito curto</span>
+      </div>
+      <div class="input-group">
+        <label>Sobrenome</label>
+        <input type="text" id="reg-last" placeholder="Silva">
+      </div>
+    </div>
+    <div class="input-group">
+      <label>E-mail</label>
+      <input type="email" id="reg-email" placeholder="joao@email.com" oninput="validateField(this,'email')">
+      <span class="error-msg" id="err-email">E-mail inválido</span>
+    </div>
+    <div class="input-row">
+      <div class="input-group">
+        <label>CPF</label>
+        <input type="text" id="reg-cpf" placeholder="000.000.000-00" oninput="maskCPF(this)">
+      </div>
+      <div class="input-group">
+        <label>Telefone</label>
+        <input type="text" id="reg-phone" placeholder="(00) 00000-0000" oninput="maskPhone(this)">
+      </div>
+    </div>
+    <div class="input-row">
+      <div class="input-group">
+        <label>Senha</label>
+        <input type="password" id="reg-pass" placeholder="Mínimo 8 caracteres" oninput="validateField(this,'pass')">
+        <span class="error-msg" id="err-pass">Mínimo 8 caracteres</span>
+      </div>
+      <div class="input-group">
+        <label>Confirmar Senha</label>
+        <input type="password" id="reg-pass2" placeholder="Repita a senha" oninput="validateField(this,'pass2')">
+        <span class="error-msg" id="err-pass2">Senhas não coincidem</span>
+      </div>
+    </div>
+
+    <div class="risk-section">
+      <span class="risk-section-label">Perfil de Apostador</span>
+      <div class="risk-row">
+        <button class="risk-btn" data-risk="low" onclick="selectRisk(this, event)">
+          <canvas class="risk-canvas" id="rc-low"></canvas>
+          <div class="risk-border"></div>
+          <div class="risk-ripple-container" id="rrip-low"></div>
+          <div class="risk-content">
+            <span class="risk-icon risk-icon--low" aria-hidden="true">
+              <svg class="risk-icon-svg" viewBox="0 0 24 24" width="26" height="26" focusable="false">
+                <defs>
+                  <linearGradient id="risk-low-shield" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stop-color="#5BFF9E"/>
+                    <stop offset="55%" stop-color="#38E67D"/>
+                    <stop offset="100%" stop-color="#1FA85A"/>
+                  </linearGradient>
+                </defs>
+                <path fill="url(#risk-low-shield)" d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                <path fill="#02003A" d="M10.2 15.6l-2.5-2.5 1.1-1.1 1.4 1.4 4.5-4.5 1.1 1.1-5.6 5.6z"/>
+              </svg>
+            </span>
+            <span class="risk-title">Baixo Risco</span>
+            <span class="risk-sub">Apostas mais seguras</span>
+          </div>
+          <div class="risk-check">&#10003;</div>
+        </button>
+        <button class="risk-btn" data-risk="mid" onclick="selectRisk(this, event)">
+          <canvas class="risk-canvas" id="rc-mid"></canvas>
+          <div class="risk-border"></div>
+          <div class="risk-ripple-container" id="rrip-mid"></div>
+          <div class="risk-content">
+            <span class="risk-icon">&#9889;</span>
+            <span class="risk-title">Moderado</span>
+            <span class="risk-sub">Equilíbrio entre risco e retorno</span>
+          </div>
+          <div class="risk-check">&#10003;</div>
+        </button>
+        <button class="risk-btn" data-risk="high" onclick="selectRisk(this, event)">
+          <canvas class="risk-canvas" id="rc-high"></canvas>
+          <div class="risk-border"></div>
+          <div class="risk-ripple-container" id="rrip-high"></div>
+          <div class="risk-content">
+            <span class="risk-icon">&#128293;</span>
+            <span class="risk-title">Alto Risco</span>
+            <span class="risk-sub">Maior retorno com mais risco</span>
+          </div>
+          <div class="risk-check">&#10003;</div>
+        </button>
+      </div>
+    </div>
+
+    <button class="btn-primary" onclick="handleRegister(this)">Criar Conta</button>
+    <div class="auth-links">Já tem conta? <a onclick="goTo('login')">Entrar</a></div>
+    <div class="auth-terms">Ao criar conta, você concorda com os <a>Termos de Uso</a> e <a>Política de Privacidade</a></div>
+  </div>
+</div>
+
+<div class="screen" id="screen-login">
+  <div class="auth-overlay"></div>
+  <div class="auth-card">
+    <div class="logo">
+      <img class="logo-img" src="assets/logo-esporte-da-sorte.png" alt="Esportes da Sorte" width="520" height="156" decoding="async">
+    </div>
+    <h1 class="auth-title">Entrar na conta</h1>
+    <p class="auth-sub">Bem-vindo de volta</p>
+
+    <div class="input-group">
+      <label>E-mail</label>
+      <input type="email" id="login-email" placeholder="seu@email.com" oninput="validateField(this,'email')">
+      <span class="error-msg" id="err-login-email">E-mail inválido</span>
+    </div>
+    <div class="input-group">
+      <label>Senha</label>
+      <input type="password" id="login-pass" placeholder="Sua senha">
+      <span class="error-msg" id="err-login"></span>
+    </div>
+    <div style="text-align:right; margin-top: -6px; margin-bottom: 16px;">
+      <a style="font-size:12px; color: var(--text-muted); cursor:pointer; transition:color 0.2s;" onmouseover="this.style.color='var(--green)'" onmouseout="this.style.color='var(--text-muted)'">Esqueci minha senha</a>
+    </div>
+
+    <button class="btn-primary" onclick="handleLogin(this)">Entrar</button>
+    <div class="auth-links">Não tem conta? <a onclick="goTo('register')">Criar conta</a></div>
+  </div>
+</div>
+
+<div class="screen" id="screen-home" style="flex-direction:column;">
+  <header class="header">
+    <div class="header-logo" onclick="goTo('home')">
+      <img class="logo-img logo-img--header" src="assets/logo-esporte-da-sorte.png" alt="Esportes da Sorte" width="320" height="96" decoding="async">
+    </div>
+    <nav class="header-nav">
+      <div class="nav-item active">⚽ Esportes</div>
+      <div class="nav-item">🔴 Ao Vivo <span class="live-badge">LIVE</span></div>
+      <div class="nav-item">🎰 Cassino</div>
+      <div class="nav-item">🎯 Promoções</div>
+    </nav>
+    <div class="header-actions">
+      <button class="btn-ghost" onclick="goTo('login')">Entrar</button>
+      <button class="btn-register" onclick="goTo('register')">Registrar</button>
+    </div>
+  </header>
+
+  <div class="home-body">
+    <aside class="sidebar">
+      <div class="sidebar-section">
+        <div class="sidebar-label">Esportes</div>
+        <div class="sidebar-item active" onclick="setSidebarActive(this)"><span class="s-icon">⚽</span> Futebol <span class="sidebar-count">248</span></div>
+        <div class="sidebar-item" onclick="setSidebarActive(this)"><span class="s-icon">🏀</span> Basquete <span class="sidebar-count">84</span></div>
+        <div class="sidebar-item" onclick="setSidebarActive(this)"><span class="s-icon">🎾</span> Tênis <span class="sidebar-count">62</span></div>
+        <div class="sidebar-item" onclick="setSidebarActive(this)"><span class="s-icon">🎮</span> E-Sports <span class="sidebar-count">38</span></div>
+        <div class="sidebar-item" onclick="setSidebarActive(this)"><span class="s-icon">🥊</span> MMA <span class="sidebar-count">14</span></div>
+        <div class="sidebar-item" onclick="setSidebarActive(this)"><span class="s-icon">🏎️</span> Fórmula 1 <span class="sidebar-count">6</span></div>
+        <div class="sidebar-item" onclick="setSidebarActive(this)"><span class="s-icon">🏈</span> Futebol Americano <span class="sidebar-count">22</span></div>
+        <div class="sidebar-item" onclick="setSidebarActive(this)"><span class="s-icon">🏒</span> Hóquei <span class="sidebar-count">18</span></div>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-label">Populares</div>
+        <div class="sidebar-item" onclick="setSidebarActive(this)"><span class="s-icon">⭐</span> Destaques</div>
+        <div class="sidebar-item" onclick="setSidebarActive(this)"><span class="s-icon">🔥</span> Mais Apostados</div>
+        <div class="sidebar-item" onclick="setSidebarActive(this)"><span class="s-icon">🏆</span> Ligas Top</div>
+      </div>
+    </aside>
+
+    <main class="main-content" id="main-content">
+      <div class="banner-wrap" id="banner-wrap">
+        <div class="banner-slides" id="banner-slides">
+          <div class="banner-slide b1">
+            <div class="banner-bg"></div>
+            <div class="banner-content">
+              <span class="banner-tag">🔴 Ao Vivo Agora</span>
+              <h2 class="banner-title">Aposte ao vivo<br>com as <span>melhores odds</span></h2>
+              <button class="btn-banner" onclick="addBetFromBanner('Brasileirão','Flamengo x Palmeiras','Casa','2.10')">Apostar Agora →</button>
+            </div>
+          </div>
+          <div class="banner-slide b2">
+            <div class="banner-bg"></div>
+            <div class="banner-content">
+              <span class="banner-tag">💰 Super Odds</span>
+              <h2 class="banner-title">Aumente seus<br><span>ganhos hoje</span></h2>
+              <button class="btn-banner" onclick="addBetFromBanner('Champions','Real Madrid x Bayern','Casa','1.85')">Ver Super Odds →</button>
+            </div>
+          </div>
+          <div class="banner-slide b3">
+            <div class="banner-bg"></div>
+            <div class="banner-content">
+              <span class="banner-tag">🎁 Promoção</span>
+              <h2 class="banner-title">Bônus de<br><span>até R$ 500</span></h2>
+              <button class="btn-banner" onclick="goTo('register')">Cadastre-se →</button>
+            </div>
+          </div>
+          <div class="banner-slide b4">
+            <div class="banner-bg"></div>
+            <div class="banner-content">
+              <span class="banner-tag">🏆 Champions League</span>
+              <h2 class="banner-title">Semifinais<br><span>ao vivo</span></h2>
+              <button class="btn-banner" onclick="addBetFromBanner('UCL','Barcelona x Inter','Empate','3.40')">Apostar →</button>
+            </div>
+          </div>
+        </div>
+        <div class="banner-dots" id="banner-dots">
+          <div class="dot active" onclick="setBanner(0)"></div>
+          <div class="dot" onclick="setBanner(1)"></div>
+          <div class="dot" onclick="setBanner(2)"></div>
+          <div class="dot" onclick="setBanner(3)"></div>
+        </div>
+      </div>
+
+      <div class="features-row">
+        <div class="feature-pill">
+          <div class="feature-icon fi-promo">🎁</div>
+          <span class="feature-label">Promoções</span>
+        </div>
+        <div class="feature-pill">
+          <div class="feature-icon fi-aviator">✈️</div>
+          <span class="feature-label">Aviator</span>
+        </div>
+        <div class="feature-pill">
+          <div class="feature-icon fi-virtual">🎮</div>
+          <span class="feature-label">Futebol Virtual</span>
+        </div>
+        <div class="feature-pill">
+          <div class="feature-icon fi-odds">⚡</div>
+          <span class="feature-label">Super Odds</span>
+        </div>
+        <div class="feature-pill">
+          <div class="feature-icon" style="background:rgba(150,80,255,0.15);box-shadow:0 0 20px rgba(150,80,255,0.15)">🎰</div>
+          <span class="feature-label">Cassino</span>
+        </div>
+      </div>
+
+      <div class="section-hd">
+        <h2 class="section-title"><span class="live-dot"></span> Ao Vivo</h2>
+        <span class="see-all">Ver todos →</span>
+      </div>
+      <div class="live-grid" id="live-grid">
+      </div>
+
+      <div class="super-odds-section animate-in">
+        <div class="so-title">⚡ Super <span>Odds</span></div>
+        <div class="so-sub">Odds exclusivas para você ganhar mais</div>
+        <div class="so-items" id="so-items">
+        </div>
+      </div>
+
+      <div class="section-hd">
+        <h2 class="section-title">🕐 Próximos Jogos</h2>
+        <span class="see-all">Ver calendário →</span>
+      </div>
+      <div class="live-grid" id="upcoming-grid"></div>
+
+    </main>
+
+    <aside class="coupon-panel">
+      <div class="coupon-header">
+        <span class="coupon-title">🎟 Cupom</span>
+        <span class="coupon-count" id="coupon-count">0</span>
+      </div>
+      <div id="coupon-body">
+        <div class="coupon-empty">
+          <div class="coupon-empty-icon">🎯</div>
+          <div class="coupon-empty-text">Seu cupom está vazio.<br>Clique em uma odd para começar!</div>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <div class="fox-assistant" id="fox-assistant" hidden>
+    <button type="button" class="fox-assistant-fab" id="fox-fab" aria-label="Abrir ou fechar o dashboard da Raposa da Sorte" aria-expanded="false" aria-controls="fox-panel">
+      <span class="fox-assistant-fab-glow" aria-hidden="true"></span>
+      <img class="fox-assistant-fab-img" src="assets/raposa-da-sorte.png" alt="" width="72" height="72" decoding="async">
+    </button>
+    <div class="fox-assistant-panel fox-dash" id="fox-panel" role="dialog" aria-labelledby="fox-assistant-title" aria-modal="true" hidden>
+      <header class="fox-assistant-head">
+        <img class="fox-assistant-avatar" src="assets/raposa-da-sorte.png" alt="" width="44" height="44" decoding="async">
+        <div class="fox-assistant-head-meta">
+          <span id="fox-assistant-title" class="fox-assistant-name">Raposa da Sorte</span>
+          <span class="fox-assistant-tag">Probabilidades · IA</span>
+        </div>
+        <button type="button" class="fox-assistant-close" id="fox-close" aria-label="Fechar dashboard">&times;</button>
+      </header>
+      <div class="fox-dash-scroll">
+        <p class="fox-dash-lead">Probabilidade de resultado (1 · X · 2) por partida — referência visual até o modelo de IA estar ligado à API.</p>
+        <p class="fox-dash-league" id="fox-dash-league">UEFA Champions League</p>
+        <div class="fox-dash-matches" id="fox-dash-matches"></div>
+      </div>
+      <form class="fox-dash-form" id="fox-form">
+        <input type="text" class="fox-dash-input" id="fox-input" placeholder="Digite sua mensagem…" autocomplete="off" maxlength="500">
+        <button type="submit" class="fox-dash-send">Enviar</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script src="esportedasorte.js"></script>
+</body>
+</html>
