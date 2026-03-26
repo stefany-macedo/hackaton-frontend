@@ -1,92 +1,61 @@
 const ApiService = (() => {
-  const BASE_URL = 'http://localhost:3000/api';
+  const BASE_URL = 'http://localhost:8000'; // Apontando pro seu FastAPI!
 
   async function request(method, endpoint, body = null, auth = false) {
-    const headers = { 'Content-Type': 'application/json' };
-    if (auth) {
-      const token = StateManager.getToken();
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-    }
-    const options = { method, headers };
-    if (body) options.body = JSON.stringify(body);
+    if (endpoint === '/users' || endpoint === '/login') {
+      const headers = { 'Content-Type': 'application/json' };
+      const options = { method, headers };
+      if (body) options.body = JSON.stringify(body);
 
-    try {
-      throw new Error('__MOCK__');
-    } catch (networkErr) {
-      if (networkErr.message !== '__MOCK__') {
-        console.error(`[ApiService] Network error on ${method} ${endpoint}:`, networkErr);
-        return { success: false, data: null, error: 'Erro de conexão com o servidor.' };
+      try {
+        const response = await fetch(`${BASE_URL}${endpoint}`, options);
+        const data = await response.json();
+
+        // Se o FastAPI retornar erro 400, 401, etc.
+        if (!response.ok) {
+          return { success: false, data: null, error: data.detail || 'Erro na API' };
+        }
+        
+        // No login, o backend devolve 'access_token', mas o front espera 'token'
+        if (endpoint === '/login') {
+            data.token = data.access_token; 
+            data.user = { email: body.email, risk_profile: data.risk_profile };
+        }
+
+        return { success: true, data: data, error: null };
+      } catch (err) {
+        console.error("Erro no Fetch:", err);
+        return { success: false, data: null, error: 'Servidor offline' };
       }
-      return _mockRouter(method, endpoint, body);
     }
+
+    // MOCK DOS JOGOS
+    return _mockRouter(method, endpoint, body);
   }
 
   function _mockRouter(method, endpoint, body) {
-    console.info(`[ApiService][MOCK] ${method} ${endpoint}`, body ?? '');
-
-    if (endpoint === '/auth/register' && method === 'POST') {
-      if (!body.email || !body.senha) return { success: false, data: null, error: 'Campos obrigatórios faltando.' };
-      return { success: true, data: { message: 'Cadastro realizado com sucesso!', userId: `usr_${Date.now()}` }, error: null };
-    }
-    if (endpoint === '/auth/login' && method === 'POST') {
-      if (!body.email || !body.senha) return { success: false, data: null, error: 'Credenciais inválidas.' };
-      return { success: true, data: { token: `mock_jwt_${Date.now()}`, user: { name: 'Apostador', email: body.email } }, error: null };
-    }
-    if (endpoint === '/games/live' && method === 'GET') {
-      return { success: true, data: _mockLiveGames(), error: null };
-    }
-    if (endpoint === '/games/upcoming' && method === 'GET') {
-      return { success: true, data: _mockUpcomingGames(), error: null };
-    }
-    if (endpoint === '/odds/super' && method === 'GET') {
-      return { success: true, data: _mockSuperOdds(), error: null };
-    }
-    if (endpoint === '/bets' && method === 'POST') {
-      return { success: true, data: { betId: `bet_${Date.now()}`, status: 'confirmed' }, error: null };
-    }
-    if (endpoint === '/user/profile' && method === 'GET') {
-      return { success: true, data: { name: 'Apostador', email: 'user@esportedasorte.com', saldo: 250.00 }, error: null };
-    }
+    if (endpoint === '/games/live' && method === 'GET') return { success: true, data: _mockLiveGames(), error: null };
+    if (endpoint === '/games/upcoming' && method === 'GET') return { success: true, data: _mockUpcomingGames(), error: null };
+    if (endpoint === '/odds/super' && method === 'GET') return { success: true, data: _mockSuperOdds(), error: null };
+    if (endpoint === '/bets' && method === 'POST') return { success: true, data: { betId: `bet_${Date.now()}`, status: 'confirmed' }, error: null };
     return { success: false, data: null, error: `Endpoint não mapeado: ${endpoint}` };
   }
 
-  function _mockLiveGames() {
-    return [
-      { id:'g1', league:'Brasileirão Série A', team1:'Flamengo', team2:'Palmeiras', score1:1, score2:1, time:"47", o1:'1.85', ox:'3.20', o2:'4.10' },
-      { id:'g2', league:'Premier League',      team1:'Man City',    team2:'Arsenal',   score1:2, score2:0, time:"63", o1:'1.40', ox:'4.50', o2:'7.00' },
-      { id:'g3', league:'Champions League',    team1:'Real Madrid', team2:'Bayern München', score1:1, score2:2, time:"78", o1:'2.80', ox:'3.50', o2:'2.20' },
-      { id:'g4', league:'Brasileirão',         team1:'São Paulo',   team2:'Corinthians',   score1:0, score2:0, time:"23", o1:'2.40', ox:'3.00', o2:'3.10' },
-      { id:'g5', league:'La Liga',             team1:'Barcelona',   team2:'Atlético Madrid', score1:3, score2:1, time:"84", o1:'1.30', ox:'5.50', o2:'9.00' },
-      { id:'g6', league:'Bundesliga',          team1:'Bayern München', team2:'Dortmund', score1:2, score2:2, time:"55", o1:'2.10', ox:'3.30', o2:'3.40' },
-    ];
-  }
-  function _mockUpcomingGames() {
-    return [
-      { id:'u1', league:'Brasileirão', team1:'Santos',    team2:'Botafogo', time:"18:00", o1:'2.50', ox:'3.20', o2:'2.80' },
-      { id:'u2', league:'Champions',   team1:'Inter Milan', team2:'PSG',   time:"20:45", o1:'2.90', ox:'3.40', o2:'2.30' },
-      { id:'u3', league:'Premier League', team1:'Liverpool', team2:'Chelsea', time:"21:00", o1:'1.95', ox:'3.60', o2:'3.80' },
-    ];
-  }
-  function _mockSuperOdds() {
-    return [
-      { id:'s1', match:'Flamengo x Palmeiras', pick:'Casa (Flamengo)', odd:'3.20', oldOdd:'1.85', league:'Brasileirão' },
-      { id:'s2', match:'Real Madrid x Bayern',  pick:'Fora (Bayern)',   odd:'4.50', oldOdd:'2.80', league:'Champions' },
-      { id:'s3', match:'Man City x Arsenal',    pick:'Empate',          odd:'4.80', oldOdd:'4.50', league:'Premier League' },
-      { id:'s4', match:'Barcelona x Atlético',  pick:'Casa (Barcelona)', odd:'2.10', oldOdd:'1.30', league:'La Liga' },
-    ];
-  }
+  function _mockLiveGames() { return [ { id:'g1', league:'Brasileirão', team1:'Flamengo', team2:'Palmeiras', score1:1, score2:1, time:"47", o1:'1.85', ox:'3.20', o2:'4.10' } ]; }
+  function _mockUpcomingGames() { return [ { id:'u1', league:'Brasileirão', team1:'Santos', team2:'Botafogo', time:"18:00", o1:'2.50', ox:'3.20', o2:'2.80' } ]; }
+  function _mockSuperOdds() { return [ { id:'s1', match:'Flamengo x Palmeiras', pick:'Casa (Flamengo)', odd:'3.20', oldOdd:'1.85', league:'Brasileirão' } ]; }
 
   return {
-    registerUser:   (data) => request('POST', '/auth/register', data),
-    loginUser:      (data) => request('POST', '/auth/login', data),
+    // apontando pra as rotas do fastapi.
+    registerUser:   (data) => request('POST', '/users', data),
+    loginUser:      (data) => request('POST', '/login', data),
+    
     getLiveGames:   ()     => request('GET',  '/games/live',   null, true),
     getUpcomingGames: ()   => request('GET',  '/games/upcoming', null, true),
     getSuperOdds:   ()     => request('GET',  '/odds/super',   null, true),
     placeBetApi:    (data) => request('POST', '/bets',         data, true),
-    getUserProfile: ()     => request('GET',  '/user/profile', null, true),
   };
 })();
-
 
 const StateManager = (() => {
   const TOKEN_KEY   = 'esporte_da_sorte_token';
@@ -366,15 +335,15 @@ const UI = (() => {
     async handleRegister(btn) {
       if (!Validators.registerForm()) return;
 
-      const payload = {
-        nome:          document.getElementById('reg-name').value.trim(),
-        sobrenome:     document.getElementById('reg-last').value.trim(),
-        email:         document.getElementById('reg-email').value.trim().toLowerCase(),
-        cpf:           document.getElementById('reg-cpf').value.replace(/\D/g,''),
-        telefone:      document.getElementById('reg-phone').value.replace(/\D/g,''),
-        senha:         document.getElementById('reg-pass').value,
-        perfil_risco:  StateManager.getRisk() || 'moderado',
-      };
+    const payload = {
+      nome:          document.getElementById('reg-name').value.trim(),
+      sobrenome:     document.getElementById('reg-last').value.trim(),
+      email:         document.getElementById('reg-email').value.trim().toLowerCase(),
+      cpf:           document.getElementById('reg-cpf').value.replace(/\D/g,''),
+      telefone:      document.getElementById('reg-phone').value.replace(/\D/g,''),
+      password_hash: document.getElementById('reg-pass').value, 
+      risk_profile:  StateManager.getRisk() || 'MODERADO', // Passando em Maiúsculo
+    };
 
       setButtonLoading(btn, true);
 
@@ -409,7 +378,7 @@ const UI = (() => {
 
       setButtonLoading(btn, true);
 
-      const res = await ApiService.loginUser({ email, senha: pass });
+      const res = await ApiService.loginUser({ email: email, password: pass });
 
       setButtonLoading(btn, false, 'Entrar');
 
