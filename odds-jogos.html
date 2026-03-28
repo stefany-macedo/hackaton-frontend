@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Odds e Jogos - Raposa da Sorte</title>
+  <link rel="stylesheet" href="esportedasorte.css">
+  <style>
+    .odds-page{min-height:100vh;background:
+      radial-gradient(circle at top left, rgba(56,230,125,.10), transparent 28%),
+      radial-gradient(circle at bottom right, rgba(22,124,255,.10), transparent 25%),
+      linear-gradient(180deg,#02003A 0%,#05072C 100%);color:#fff}
+    .odds-shell{max-width:1280px;margin:0 auto;padding:24px 16px 120px}
+    .odds-topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:20px;flex-wrap:wrap}
+    .odds-title-wrap h1{margin:0;font-size:28px;color:var(--green)}
+    .odds-title-wrap p{margin:8px 0 0;color:rgba(255,255,255,.72);max-width:720px;line-height:1.5}
+    .odds-actions{display:flex;gap:10px;flex-wrap:wrap}
+    .odds-btn{border:0;border-radius:12px;padding:12px 16px;font-weight:700;cursor:pointer;transition:.2s ease}
+    .odds-btn-primary{background:var(--green);color:#02003A}
+    .odds-btn-secondary{background:rgba(255,255,255,.08);color:#fff;border:1px solid rgba(56,230,125,.22)}
+    .odds-layout{display:grid;grid-template-columns:1.1fr .9fr;gap:18px;align-items:start}
+    .odds-panel{background:rgba(255,255,255,.05);border:1px solid rgba(56,230,125,.18);border-radius:20px;box-shadow:0 16px 48px rgba(0,0,0,.30);overflow:hidden}
+    .odds-panel-head{padding:18px 18px 14px;border-bottom:1px solid rgba(255,255,255,.06);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+    .odds-panel-head h2{margin:0;font-size:18px}
+    .odds-panel-head span{color:rgba(255,255,255,.7);font-size:13px}
+    .odds-tabs{display:flex;gap:8px;flex-wrap:wrap}
+    .odds-tab{border:1px solid rgba(56,230,125,.18);background:rgba(255,255,255,.06);color:#fff;border-radius:999px;padding:8px 14px;font-weight:700;cursor:pointer}
+    .odds-tab.active{background:var(--green);color:#02003A;border-color:transparent}
+    .games-list{padding:18px;display:grid;gap:14px}
+    .game-card-odds{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:18px;padding:16px;cursor:pointer;transition:.2s ease}
+    .game-card-odds:hover,.game-card-odds.active{transform:translateY(-2px);border-color:rgba(56,230,125,.35);box-shadow:0 10px 28px rgba(0,0,0,.20)}
+    .game-card-top{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+    .game-badges{display:flex;gap:8px;flex-wrap:wrap}
+    .badge-pill{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;font-size:11px;font-weight:800;letter-spacing:.3px}
+    .badge-live{background:rgba(255,59,92,.16);color:#ff7b94;border:1px solid rgba(255,123,148,.25)}
+    .badge-upcoming{background:rgba(56,230,125,.10);color:var(--green);border:1px solid rgba(56,230,125,.22)}
+    .badge-league{background:rgba(255,255,255,.08);color:rgba(255,255,255,.8);border:1px solid rgba(255,255,255,.08)}
+    .game-time{color:rgba(255,255,255,.76);font-size:13px;font-weight:700}
+    .game-teams{display:grid;gap:10px;margin-bottom:14px}
+    .game-team-row{display:flex;justify-content:space-between;align-items:center;gap:12px}
+    .game-team-name{font-weight:700;font-size:15px}
+    .game-team-score{min-width:28px;text-align:center;font-weight:900;color:var(--green);font-size:18px}
+    .main-odds-row{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+    .main-odd-btn{border:1px solid rgba(56,230,125,.18);border-radius:14px;background:rgba(255,255,255,.06);color:#fff;padding:12px;cursor:pointer;transition:.2s ease}
+    .main-odd-btn:hover{border-color:rgba(56,230,125,.36);background:rgba(56,230,125,.08)}
+    .main-odd-label{display:block;font-size:11px;color:rgba(255,255,255,.64);margin-bottom:6px}
+    .main-odd-value{display:block;font-weight:900;font-size:18px;color:var(--green)}
+    .details-body{padding:18px;display:grid;gap:18px}
+    .selected-match-box,.market-group{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:18px;padding:16px}
+    .selected-match-box h3,.market-group h4{margin:0 0 12px}
+    .selected-line{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;color:rgba(255,255,255,.74);font-size:13px}
+    .recommendation-box{background:linear-gradient(135deg, rgba(56,230,125,.14), rgba(56,230,125,.04));border:1px solid rgba(56,230,125,.22);border-radius:18px;padding:16px}
+    .recommendation-box h4{margin:0 0 8px;color:var(--green);font-size:16px}
+    .recommendation-box p{margin:0;color:rgba(255,255,255,.82);line-height:1.5}
+    .markets-wrap{display:grid;gap:14px}
+    .market-options{display:grid;gap:10px}
+    .market-option{display:grid;grid-template-columns:1fr auto auto;gap:12px;align-items:center;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:12px}
+    .market-option-main{display:grid;gap:4px}
+    .market-option-title{font-weight:700;font-size:14px}
+    .market-option-meta{font-size:12px;color:rgba(255,255,255,.72);display:flex;gap:10px;flex-wrap:wrap}
+    .market-odd-box{text-align:right;min-width:92px}
+    .market-odd-label{display:block;font-size:11px;color:rgba(255,255,255,.62);margin-bottom:4px}
+    .market-odd-value{font-size:18px;font-weight:900;color:var(--green)}
+    .market-add-btn{border:0;border-radius:12px;padding:12px 14px;background:var(--green);color:#02003A;font-weight:800;cursor:pointer;min-width:110px}
+    .empty-box{padding:24px;text-align:center;color:rgba(255,255,255,.7)}
+    @media (max-width:980px){.odds-layout{grid-template-columns:1fr}}
+    @media (max-width:720px){
+      .odds-title-wrap h1{font-size:22px}
+      .main-odds-row{grid-template-columns:1fr}
+      .market-option{grid-template-columns:1fr}
+      .market-odd-box{text-align:left}
+      .market-add-btn{width:100%}
+    }
+  </style>
+</head>
+<body class="odds-page">
+  <div class="odds-shell">
+    <div class="odds-topbar">
+      <div class="odds-title-wrap">
+        <h1>Odds e Jogos</h1>
+        <p>Compare jogos ao vivo e próximos, veja mercados, odds e a recomendação da Raposa baseada no seu perfil.</p>
+      </div>
+      <div class="odds-actions">
+        <button class="odds-btn odds-btn-secondary" onclick="window.location.href='esportedasorte.html'">← Voltar</button>
+        <button class="odds-btn odds-btn-primary" onclick="composeSmartCouponFromOddsPage()">🦊 Montar múltipla</button>
+      </div>
+    </div>
+
+    <div class="odds-layout">
+      <section class="odds-panel">
+        <div class="odds-panel-head">
+          <div>
+            <h2>Partidas disponíveis</h2>
+            <span>Live e próximos</span>
+          </div>
+          <div class="odds-tabs">
+            <button id="tab-live" class="odds-tab active" onclick="setOddsTab('live')">Ao vivo</button>
+            <button id="tab-upcoming" class="odds-tab" onclick="setOddsTab('upcoming')">Próximos</button>
+          </div>
+        </div>
+        <div id="games-list" class="games-list"></div>
+      </section>
+
+      <section class="odds-panel">
+        <div class="odds-panel-head">
+          <div>
+            <h2>Mercados e recomendações</h2>
+            <span id="selected-match-subtitle">Selecione um jogo</span>
+          </div>
+        </div>
+        <div id="details-body" class="details-body">
+          <div class="empty-box">Escolha um jogo na lista para carregar odds, mercados e recomendações.</div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script src="esportedasorte.js"></script>
+  <script>
+    let oddsPageTab = 'live';
+    let oddsPageState = {
+      liveGames: [],
+      upcomingGames: [],
+      selectedGame: null,
+      selectedMarkets: [],
+      selectedRecommendations: [],
+    };
+
+    function formatOddValue(v) {
+      const n = Number(v);
+      return Number.isNaN(n) ? '-' : n.toFixed(2);
+    }
+
+    function setOddsTab(tab) {
+      oddsPageTab = tab;
+      document.getElementById('tab-live')?.classList.toggle('active', tab === 'live');
+      document.getElementById('tab-upcoming')?.classList.toggle('active', tab === 'upcoming');
+      renderOddsGamesList();
+      clearOddsDetails();
+    }
+
+    function getCurrentGames() {
+      return oddsPageTab === 'live' ? oddsPageState.liveGames : oddsPageState.upcomingGames;
+    }
+
+    function renderOddsGamesList() {
+      const list = document.getElementById('games-list');
+      if (!list) return;
+
+      const games = getCurrentGames();
+      if (!games.length) {
+        list.innerHTML = `<div class="empty-box">Nenhum jogo disponível.</div>`;
+        return;
+      }
+
+      list.innerHTML = games.map(game => {
+        const isLive = oddsPageTab === 'live';
+        const active = oddsPageState.selectedGame?.id === game.id ? 'active' : '';
+
+        return `
+          <article class="game-card-odds ${active}" onclick="selectOddsGame('${game.id}')">
+            <div class="game-card-top">
+              <div class="game-badges">
+                <span class="badge-pill ${isLive ? 'badge-live' : 'badge-upcoming'}">${isLive ? '● AO VIVO' : 'PRÓXIMO'}</span>
+                <span class="badge-pill badge-league">${game.league}</span>
+              </div>
+              <div class="game-time">${isLive ? `${game.time}'` : game.time}</div>
+            </div>
+
+            <div class="game-teams">
+              <div class="game-team-row">
+                <span class="game-team-name">${game.team1}</span>
+                <span class="game-team-score">${isLive ? game.score1 : ''}</span>
+              </div>
+              <div class="game-team-row">
+                <span class="game-team-name">${game.team2}</span>
+                <span class="game-team-score">${isLive ? game.score2 : ''}</span>
+              </div>
+            </div>
+
+            <div class="main-odds-row">
+              <button class="main-odd-btn" onclick="event.stopPropagation(); quickAddOddsPageBet('${game.id}','${game.league}','${game.team1} x ${game.team2}','1x2','home','${game.team1} vence','${game.o1}')">
+                <span class="main-odd-label">1</span>
+                <span class="main-odd-value">${formatOddValue(game.o1)}</span>
+              </button>
+              <button class="main-odd-btn" onclick="event.stopPropagation(); quickAddOddsPageBet('${game.id}','${game.league}','${game.team1} x ${game.team2}','1x2','draw','Empate','${game.ox}')">
+                <span class="main-odd-label">X</span>
+                <span class="main-odd-value">${formatOddValue(game.ox)}</span>
+              </button>
+              <button class="main-odd-btn" onclick="event.stopPropagation(); quickAddOddsPageBet('${game.id}','${game.league}','${game.team1} x ${game.team2}','1x2','away','${game.team2} vence','${game.o2}')">
+                <span class="main-odd-label">2</span>
+                <span class="main-odd-value">${formatOddValue(game.o2)}</span>
+              </button>
+            </div>
+          </article>
+        `;
+      }).join('');
+    }
+
+    function clearOddsDetails() {
+      oddsPageState.selectedGame = null;
+      oddsPageState.selectedMarkets = [];
+      oddsPageState.selectedRecommendations = [];
+      const subtitle = document.getElementById('selected-match-subtitle');
+      const body = document.getElementById('details-body');
+      if (subtitle) subtitle.textContent = 'Selecione um jogo';
+      if (body) body.innerHTML = '<div class="empty-box">Escolha um jogo para carregar mercados e recomendações.</div>';
+    }
+
+    async function selectOddsGame(gameId) {
+      const user = StateManager.getUser();
+      if (!user?.id) {
+        showToast('Faça login para ver a análise.');
+        return;
+      }
+
+      const game = [...oddsPageState.liveGames, ...oddsPageState.upcomingGames].find(g => g.id === gameId);
+      if (!game) return;
+
+      oddsPageState.selectedGame = game;
+
+      const [marketsRes, recsRes] = await Promise.all([
+        ApiService.getGameMarkets(gameId),
+        ApiService.getLiveRecommendations(gameId, user.id),
+      ]);
+
+      oddsPageState.selectedMarkets = marketsRes.success ? (marketsRes.data.markets || []) : [];
+      oddsPageState.selectedRecommendations = recsRes.success ? (recsRes.data.recommendations || []) : [];
+
+      renderOddsGamesList();
+      renderOddsDetails(game, oddsPageState.selectedMarkets, recsRes.success ? recsRes.data : null);
+    }
+
+    function renderOddsDetails(game, markets, recsPayload) {
+      const box = document.getElementById('details-body');
+      const subtitle = document.getElementById('selected-match-subtitle');
+      if (!box || !subtitle) return;
+
+      subtitle.textContent = `${game.team1} x ${game.team2}`;
+
+     const recommendationHtml = recsPayload
+  ? `
+    <div class="recommendation-box">
+      <h4>🦊 Recomendação da Raposa</h4>
+      <p>${recsPayload.assistant_summary || 'Sem recomendação disponível no momento.'}</p>
+      ${
+        (recsPayload.recommendations || []).length
+          ? `
+            <div style="margin-top:12px; display:grid; gap:8px;">
+              ${recsPayload.recommendations.slice(0, 3).map(rec => `
+                <div style="background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:10px 12px;">
+                  <div style="font-weight:700;">${rec.selection_label}</div>
+                  <div style="font-size:12px;color:rgba(255,255,255,.72);margin-top:4px;">
+                    Odd ${formatOddValue(rec.market_odd)} · Risco ${rec.risk_level} · Modelo ${(Number(rec.model_probability) * 100).toFixed(1)}%
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          `
+          : ''
+      }
+    </div>
+  `
+  : '';
+
+      const marketsHtml = markets.length ? `
+        <div class="markets-wrap">
+          ${markets.map(group => `
+            <section class="market-group">
+              <h4>${group.market_name}</h4>
+              <div class="market-options">
+                ${(group.options || []).map(opt => `
+                  <article class="market-option">
+                    <div class="market-option-main">
+                      <div class="market-option-title">${opt.selection_label}</div>
+                      <div class="market-option-meta">
+                        <span>Modelo: ${(Number(opt.model_probability) * 100).toFixed(1)}%</span>
+                        <span>Justa: ${formatOddValue(opt.model_odd)}</span>
+                        <span>Edge: ${Number(opt.edge_pct).toFixed(2)}%</span>
+                        <span>Risco: ${opt.risk_level}</span>
+                      </div>
+                    </div>
+                    <div class="market-odd-box">
+                      <span class="market-odd-label">Odd mercado</span>
+                      <span class="market-odd-value">${formatOddValue(opt.market_odd)}</span>
+                    </div>
+                    <button
+                      class="market-add-btn"
+                      onclick="addMarketOptionToCoupon('${game.id}','${game.league}','${game.team1} x ${game.team2}','${group.market_type}','${opt.selection_key}','${escapeHtml(opt.selection_label)}','${opt.market_odd}')"
+                    >
+                      Adicionar
+                    </button>
+                  </article>
+                `).join('')}
+              </div>
+            </section>
+          `).join('')}
+        </div>
+      ` : `<div class="empty-box">Nenhum mercado disponível para esta partida.</div>`;
+
+      box.innerHTML = selectedInfo + recommendationHtml + marketsHtml;
+    }
+
+    function escapeHtml(text) {
+      return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    }
+
+    function quickAddOddsPageBet(gameId, league, match, marketType, selectionKey, label, odd) {
+      const result = StateManager.addBet({
+        gameId,
+        league,
+        match,
+        pick: label,
+        odd: parseFloat(odd),
+        marketType,
+        selectionKey,
+      });
+      showToast(result === 'added' ? 'Aposta adicionada ao cupom! 🎯' : 'Aposta removida do cupom.');
+    }
+
+    function addMarketOptionToCoupon(gameId, league, match, marketType, selectionKey, label, odd) {
+      quickAddOddsPageBet(gameId, league, match, marketType, selectionKey, label, odd);
+    }
+
+    async function composeSmartCouponFromOddsPage() {
+      await composeSmartCoupon();
+    }
+
+    async function bootstrapOddsPage() {
+      if (!StateManager.isLoggedIn()) {
+        window.location.href = 'esportedasorte.html';
+        return;
+      }
+
+      const [liveRes, upcomingRes] = await Promise.all([
+        ApiService.getLiveGames(),
+        ApiService.getUpcomingGames(),
+      ]);
+
+      oddsPageState.liveGames = liveRes.success ? normalizeLiveGames(liveRes.data) : [];
+      oddsPageState.upcomingGames = upcomingRes.success ? normalizeUpcomingGames(upcomingRes.data) : [];
+
+      renderOddsGamesList();
+    }
+
+    window.addEventListener('load', bootstrapOddsPage);
+  </script>
+</body>
+</html>

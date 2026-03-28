@@ -1,79 +1,82 @@
+const CONFIG = {
+  BASE_URL: 'http://localhost:8004',
+  POLL_INTERVAL_MS: 30000,
+};
+
 const ApiService = (() => {
-  const BASE_URL = 'http://localhost:8000'; // Apontando pro seu FastAPI!
-
   async function request(method, endpoint, body = null, auth = false) {
-    if (endpoint === '/users' || endpoint === '/login') {
-      const headers = { 'Content-Type': 'application/json' };
-      const options = { method, headers };
-      if (body) options.body = JSON.stringify(body);
+    const headers = { 'Content-Type': 'application/json' };
 
-      try {
-        const response = await fetch(`${BASE_URL}${endpoint}`, options);
-        const data = await response.json();
-
-        // Se o FastAPI retornar erro 400, 401, etc.
-        if (!response.ok) {
-          return { success: false, data: null, error: data.detail || 'Erro na API' };
-        }
-        
-        // No login, o backend devolve 'access_token', mas o front espera 'token'
-        if (endpoint === '/login') {
-            data.token = data.access_token; 
-            data.user = { email: body.email, risk_profile: data.risk_profile };
-        }
-
-        return { success: true, data: data, error: null };
-      } catch (err) {
-        console.error("Erro no Fetch:", err);
-        return { success: false, data: null, error: 'Servidor offline' };
-      }
+    if (auth) {
+      const token = StateManager.getToken();
+      if (token) headers.Authorization = `Bearer ${token}`;
     }
 
-    // MOCK DOS JOGOS
-    return _mockRouter(method, endpoint, body);
-  }
+    const options = { method, headers };
+    if (body) options.body = JSON.stringify(body);
 
-  function _mockRouter(method, endpoint, body) {
-    if (endpoint === '/games/live' && method === 'GET') return { success: true, data: _mockLiveGames(), error: null };
-    if (endpoint === '/games/upcoming' && method === 'GET') return { success: true, data: _mockUpcomingGames(), error: null };
-    if (endpoint === '/odds/super' && method === 'GET') return { success: true, data: _mockSuperOdds(), error: null };
-    if (endpoint === '/bets' && method === 'POST') return { success: true, data: { betId: `bet_${Date.now()}`, status: 'confirmed' }, error: null };
-    return { success: false, data: null, error: `Endpoint não mapeado: ${endpoint}` };
-  }
+    try {
+      const response = await fetch(`${CONFIG.BASE_URL}${endpoint}`, options);
+      const data = await response.json().catch(() => ({}));
 
-  function _mockLiveGames() { return [ { id:'g1', league:'Brasileirão', team1:'Flamengo', team2:'Palmeiras', score1:1, score2:1, time:"47", o1:'1.85', ox:'3.20', o2:'4.10' } ]; }
-  function _mockUpcomingGames() { return [ { id:'u1', league:'Brasileirão', team1:'Santos', team2:'Botafogo', time:"18:00", o1:'2.50', ox:'3.20', o2:'2.80' } ]; }
-  function _mockSuperOdds() { return [ { id:'s1', match:'Flamengo x Palmeiras', pick:'Casa (Flamengo)', odd:'3.20', oldOdd:'1.85', league:'Brasileirão' } ]; }
+      if (!response.ok) {
+        return {
+          success: false,
+          data: null,
+          error: data.detail || data.message || 'Erro na API',
+        };
+      }
+
+      if (endpoint === '/login') {
+        data.token = data.access_token;
+      }
+
+      return { success: true, data, error: null };
+    } catch (err) {
+      console.error('[ApiService] Fetch error:', err);
+      return { success: false, data: null, error: 'Servidor offline' };
+    }
+  }
 
   return {
-    // apontando pra as rotas do fastapi.
-    registerUser:   (data) => request('POST', '/users', data),
-    loginUser:      (data) => request('POST', '/login', data),
-    
-    getLiveGames:   ()     => request('GET',  '/games/live',   null, true),
-    getUpcomingGames: ()   => request('GET',  '/games/upcoming', null, true),
-    getSuperOdds:   ()     => request('GET',  '/odds/super',   null, true),
-    placeBetApi:    (data) => request('POST', '/bets',         data, true),
+    registerUser: (data) => request('POST', '/users', data),
+    loginUser: (data) => request('POST', '/login', data),
+
+    getLiveGames: () => request('GET', '/games/live', null, true),
+    getUpcomingGames: () => request('GET', '/games/upcoming', null, true),
+    getGameMarkets: (matchId) => request('GET', `/games/${matchId}/markets`, null, true),
+    getUserProfile: (userId) => request('GET', `/users/${userId}/profile`, null, true),
+    getLiveRecommendations: (matchId, userId) =>
+      request('GET', `/recommendations/live/${matchId}?user_id=${userId}`, null, true),
+    composeCoupon: (data) => request('POST', '/coupon/compose', data, true),
+    placeBetApi: (data) => request('POST', '/bets', data, true),
+    assistantChat: (data) => request('POST', '/assistant/chat', data, true),
+    getLiveGames: () => request('GET', '/games/live', null, true),
+    getUpcomingGames: () => request('GET', '/games/upcoming', null, true),
+    getGameMarkets: (matchId) => request('GET', `/games/${matchId}/markets`, null, true),
   };
 })();
 
 const StateManager = (() => {
-  const TOKEN_KEY   = 'esporte_da_sorte_token';
-  const USER_KEY    = 'esporte_da_sorte_user';
+  const TOKEN_KEY = 'esporte_da_sorte_token';
+  const USER_KEY = 'esporte_da_sorte_user';
 
   const _state = {
-    token:         localStorage.getItem(TOKEN_KEY) || null,
-    user:          JSON.parse(localStorage.getItem(USER_KEY) || 'null'),
-    bets:          [],
-    liveGames:     [],
+    token: localStorage.getItem(TOKEN_KEY) || null,
+    user: JSON.parse(localStorage.getItem(USER_KEY) || 'null'),
+    bets: [],
+    liveGames: [],
     upcomingGames: [],
-    superOdds:     [],
-    selectedRisk:  null,
-    bannerIdx:     0,
+    superOdds: [],
+    userProfile: null,
+    currentMatchId: null,
+    currentMarkets: [],
+    currentRecommendations: [],
     livePollingId: null,
   };
 
   const _listeners = {};
+
   function _emit(event, payload) {
     (_listeners[event] || []).forEach(fn => fn(payload));
   }
@@ -81,98 +84,139 @@ const StateManager = (() => {
   return {
     setSession(token, user) {
       _state.token = token;
-      _state.user  = user;
+      _state.user = user;
       localStorage.setItem(TOKEN_KEY, token);
       localStorage.setItem(USER_KEY, JSON.stringify(user));
       _emit('session:changed', { token, user });
     },
-    getToken()   { return _state.token; },
-    getUser()    { return _state.user; },
-    isLoggedIn() { return !!_state.token; },
+
     logout() {
       _state.token = null;
-      _state.user  = null;
+      _state.user = null;
       localStorage.removeItem(TOKEN_KEY);
       localStorage.removeItem(USER_KEY);
+      this.clearBets();
+      this.setUserProfile(null);
+      this.setCurrentMatch(null, [], []);
       _emit('session:changed', null);
     },
 
-    setRisk(risk)  { _state.selectedRisk = risk; },
-    getRisk()      { return _state.selectedRisk; },
+    getToken() { return _state.token; },
+    getUser() { return _state.user; },
+    isLoggedIn() { return !!_state.token && !!_state.user; },
 
-    getBets()      { return [..._state.bets]; },
+    getBets() { return [..._state.bets]; },
     addBet(bet) {
-      const idx = _state.bets.findIndex(b => b.gameId === bet.gameId && b.pick === bet.pick);
-      if (idx !== -1) { _state.bets.splice(idx, 1); _emit('coupon:changed', this.getBets()); return 'removed'; }
+      const idx = _state.bets.findIndex(
+        b => b.gameId === bet.gameId && b.selectionKey === bet.selectionKey
+      );
+
+      if (idx !== -1) {
+        _state.bets.splice(idx, 1);
+        _emit('coupon:changed', this.getBets());
+        return 'removed';
+      }
+
       _state.bets.push(bet);
       _emit('coupon:changed', this.getBets());
       return 'added';
     },
-    removeBetAt(i) { _state.bets.splice(i, 1); _emit('coupon:changed', this.getBets()); },
-    clearBets()    { _state.bets = []; _emit('coupon:changed', []); },
+    removeBetAt(i) {
+      _state.bets.splice(i, 1);
+      _emit('coupon:changed', this.getBets());
+    },
+    clearBets() {
+      _state.bets = [];
+      _emit('coupon:changed', []);
+    },
 
-    setLiveGames(games)     { _state.liveGames     = games; _emit('games:live',     games); },
-    setUpcomingGames(games) { _state.upcomingGames = games; _emit('games:upcoming', games); },
-    setSuperOdds(odds)      { _state.superOdds     = odds;  _emit('odds:super',     odds);  },
-    getLiveGames()          { return _state.liveGames; },
-    getUpcomingGames()      { return _state.upcomingGames; },
-    getSuperOdds()          { return _state.superOdds; },
+    setLiveGames(games) {
+      _state.liveGames = Array.isArray(games) ? games : [];
+      _emit('games:live', this.getLiveGames());
+    },
+    getLiveGames() { return [..._state.liveGames]; },
 
-    getBannerIdx()  { return _state.bannerIdx; },
-    setBannerIdx(i) { _state.bannerIdx = i; },
+    setUpcomingGames(games) {
+      _state.upcomingGames = Array.isArray(games) ? games : [];
+      _emit('games:upcoming', this.getUpcomingGames());
+    },
+    getUpcomingGames() { return [..._state.upcomingGames]; },
 
-    startLivePolling(intervalMs = 30000) {
+    setSuperOdds(items) {
+      _state.superOdds = Array.isArray(items) ? items : [];
+      _emit('odds:super', this.getSuperOdds());
+    },
+    getSuperOdds() { return [..._state.superOdds]; },
+
+    setUserProfile(profile) {
+      _state.userProfile = profile;
+      _emit('profile:changed', profile);
+    },
+    getUserProfile() { return _state.userProfile; },
+
+    setCurrentMatch(matchId, markets = [], recommendations = []) {
+      _state.currentMatchId = matchId;
+      _state.currentMarkets = markets;
+      _state.currentRecommendations = recommendations;
+      _emit('match:changed', {
+        matchId,
+        markets,
+        recommendations,
+      });
+    },
+    getCurrentMatchId() { return _state.currentMatchId; },
+    getCurrentMarkets() { return [..._state.currentMarkets]; },
+    getCurrentRecommendations() { return [..._state.currentRecommendations]; },
+
+    startLivePolling(intervalMs = CONFIG.POLL_INTERVAL_MS) {
       if (_state.livePollingId) return;
       _state.livePollingId = setInterval(async () => {
+        if (!this.isLoggedIn()) return;
         const res = await ApiService.getLiveGames();
-        if (res.success) this.setLiveGames(res.data);
+        if (res.success) this.setLiveGames(normalizeLiveGames(res.data));
       }, intervalMs);
-      console.info(`[StateManager] Live polling started (every ${intervalMs / 1000}s)`);
-    },
-    stopLivePolling() {
-      if (_state.livePollingId) { clearInterval(_state.livePollingId); _state.livePollingId = null; }
     },
 
-    connectWebSocket(url) {
-      if (!url) { console.warn('[StateManager] WebSocket URL not provided.'); return; }
-      try {
-        const ws = new WebSocket(url);
-        ws.onopen    = () => console.info('[WS] Connected to', url);
-        ws.onmessage = (evt) => {
-          try {
-            const msg = JSON.parse(evt.data);
-            if (msg.type === 'LIVE_UPDATE')  this.setLiveGames(msg.payload);
-            if (msg.type === 'ODDS_UPDATE')  _emit('odds:update', msg.payload);
-          } catch { console.warn('[WS] Malformed message', evt.data); }
-        };
-        ws.onerror   = (e) => console.error('[WS] Error', e);
-        ws.onclose   = () => { console.warn('[WS] Disconnected. Falling back to polling.'); this.startLivePolling(); };
-        return ws;
-      } catch(e) {
-        console.error('[WS] Could not connect:', e);
-        this.startLivePolling();
+    stopLivePolling() {
+      if (_state.livePollingId) {
+        clearInterval(_state.livePollingId);
+        _state.livePollingId = null;
       }
     },
 
-    on(event, fn)  { if (!_listeners[event]) _listeners[event] = []; _listeners[event].push(fn); },
-    off(event, fn) { if (_listeners[event]) _listeners[event] = _listeners[event].filter(f => f !== fn); },
+    on(event, fn) {
+      if (!_listeners[event]) _listeners[event] = [];
+      _listeners[event].push(fn);
+    },
+
+    off(event, fn) {
+      if (_listeners[event]) {
+        _listeners[event] = _listeners[event].filter(f => f !== fn);
+      }
+    },
   };
 })();
 
-
 const Validators = {
-  email:  v => /\S+@\S+\.\S+/.test(v),
-  name:   v => v.trim().length >= 2,
-  pass:   v => v.length >= 8,
-  pass2:  v => v === (document.getElementById('reg-pass')?.value || ''),
-  cpf:    v => v.replace(/\D/g,'').length === 11,
-  phone:  v => v.replace(/\D/g,'').length >= 10,
+  email: v => /\S+@\S+\.\S+/.test(v),
+  name: v => v.trim().length >= 2,
+  pass: v => v.length >= 8,
+  pass2: v => v === (document.getElementById('reg-pass')?.value || ''),
+  cpf: v => v.replace(/\D/g, '').length === 11,
+  phone: v => v.replace(/\D/g, '').length >= 10,
 
   field(input, type) {
-    const errMap = { email:'err-email', name:'err-name', pass:'err-pass', pass2:'err-pass2' };
-    const valid  = this[type] ? this[type](input.value) : true;
-    const errEl  = document.getElementById(errMap[type]);
-    const show   = !valid && input.value.length > 0;
+    const errMap = {
+      email: 'err-email',
+      name: 'err-name',
+      pass: 'err-pass',
+      pass2: 'err-pass2',
+    };
+
+    const valid = this[type] ? this[type](input.value) : true;
+    const errEl = document.getElementById(errMap[type]);
+    const show = !valid && input.value.length > 0;
+
     if (errEl) errEl.classList.toggle('show', show);
     input.classList.toggle('error', show);
     return valid;
@@ -180,149 +224,119 @@ const Validators = {
 
   registerForm() {
     const f = {
-      name:  document.getElementById('reg-name'),
+      name: document.getElementById('reg-name'),
       email: document.getElementById('reg-email'),
-      pass:  document.getElementById('reg-pass'),
+      pass: document.getElementById('reg-pass'),
       pass2: document.getElementById('reg-pass2'),
     };
+
     return (
-      this.field(f.name,  'name')  &
+      this.field(f.name, 'name') &
       this.field(f.email, 'email') &
-      this.field(f.pass,  'pass')  &
+      this.field(f.pass, 'pass') &
       this.field(f.pass2, 'pass2')
     );
   },
 };
 
 function maskCPF(el) {
-  let v = el.value.replace(/\D/g,'').slice(0,11);
-  v = v.replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d{1,2})$/,'$1-$2');
+  let v = el.value.replace(/\D/g, '').slice(0, 11);
+  v = v
+    .replace(/(\d{3})(\d)/, '$1.$2')
+    .replace(/(\d{3})(\d)/, '$1.$2')
+    .replace(/(\d{3})(\d{1,2})$/, '$1-$2');
   el.value = v;
 }
+
 function maskPhone(el) {
-  let v = el.value.replace(/\D/g,'').slice(0,11);
-  if (v.length > 10) v = v.replace(/^(\d{2})(\d{5})(\d{4})$/,'($1) $2-$3');
-  else if (v.length > 6) v = v.replace(/^(\d{2})(\d{4})(\d*)$/,'($1) $2-$3');
-  else if (v.length > 2) v = v.replace(/^(\d{2})(\d*)$/,'($1) $2');
+  let v = el.value.replace(/\D/g, '').slice(0, 11);
+  if (v.length > 10) v = v.replace(/^(\d{2})(\d{5})(\d{4})$/, '($1) $2-$3');
+  else if (v.length > 6) v = v.replace(/^(\d{2})(\d{4})(\d*)$/, '($1) $2-$3');
+  else if (v.length > 2) v = v.replace(/^(\d{2})(\d*)$/, '($1) $2');
   el.value = v;
 }
 
-function validateField(input, type) { Validators.field(input, type); }
+function validateField(input, type) {
+  Validators.field(input, type);
+}
 
+function normalizeLiveGames(games) {
+  return (games || []).map(g => ({
+    id: g.id,
+    league: g.league,
+    team1: g.team1,
+    team2: g.team2,
+    score1: g.score1 ?? 0,
+    score2: g.score2 ?? 0,
+    time: String(g.time ?? g.minute ?? '0'),
+    status: g.status || 'LIVE',
+    o1: g.main_market?.o1 || g.o1 || '-',
+    ox: g.main_market?.ox || g.ox || '-',
+    o2: g.main_market?.o2 || g.o2 || '-',
+  }));
+}
+
+function normalizeUpcomingGames(games) {
+  return (games || []).map(g => ({
+    id: g.id,
+    league: g.league,
+    team1: g.team1,
+    team2: g.team2,
+    time: String(g.time ?? ''),
+    o1: g.main_market?.o1 || g.o1 || '-',
+    ox: g.main_market?.ox || g.ox || '-',
+    o2: g.main_market?.o2 || g.o2 || '-',
+  }));
+}
+
+function formatOdd(value) {
+  const n = Number(value);
+  if (Number.isNaN(n)) return '-';
+  return n.toFixed(2);
+}
+
+function getRiskEmoji(risk) {
+  if (risk === 'baixo') return '🟢';
+  if (risk === 'medio') return '🟡';
+  if (risk === 'alto') return '🔴';
+  return '⚪';
+}
 
 const UI = (() => {
+  function $(id) {
+    return document.getElementById(id);
+  }
 
   function showToast(msg) {
-    const t = document.getElementById('toast');
-    document.getElementById('toast-msg').textContent = msg;
+    const t = $('toast');
+    const msgEl = $('toast-msg');
+    if (!t || !msgEl) return;
+    msgEl.textContent = msg;
     t.classList.add('show');
-    setTimeout(() => t.classList.remove('show'), 3000);
+    setTimeout(() => t.classList.remove('show'), 2800);
   }
 
   function goTo(screen) {
     document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-    document.getElementById('screen-' + screen).classList.add('active');
+    $(`screen-${screen}`)?.classList.add('active');
     window.scrollTo(0, 0);
-    const canvas = document.getElementById('particles-canvas');
-    canvas.style.display = screen === 'home' ? 'none' : 'block';
+
+    const canvas = $('particles-canvas');
+    if (canvas) {
+      canvas.style.display = screen === 'home' ? 'none' : 'block';
+    }
   }
 
   function setButtonLoading(btn, loading, label) {
-    if (loading) { btn.classList.add('loading'); btn.textContent = ''; }
-    else         { btn.classList.remove('loading'); btn.textContent = label; }
-  }
-
-  function renderCoupon() {
-    const bets  = StateManager.getBets();
-    const count = document.getElementById('coupon-count');
-    const body  = document.getElementById('coupon-body');
-    count.textContent = bets.length;
-
-    if (bets.length === 0) {
-      body.innerHTML = `<div class="coupon-empty"><div class="coupon-empty-icon">🎯</div><div class="coupon-empty-text">Seu cupom está vazio.<br>Clique em uma odd para começar!</div></div>`;
-      return;
+    if (!btn) return;
+    if (loading) {
+      btn.classList.add('loading');
+      btn.dataset.label = btn.textContent;
+      btn.textContent = '';
+    } else {
+      btn.classList.remove('loading');
+      btn.textContent = label || btn.dataset.label || 'Enviar';
     }
-
-    const totalOdd = bets.reduce((acc, b) => acc * parseFloat(b.odd), 1).toFixed(2);
-    body.innerHTML = `
-      <div class="coupon-bets">
-        ${bets.map((b, i) => `
-          <div class="coupon-bet-card">
-            <span class="cbc-remove" onclick="UI.removeBetAt(${i})">✕</span>
-            <div class="cbc-match">${b.match}</div>
-            <div class="cbc-pick">${b.pick}</div>
-            <div class="cbc-odd">${b.odd}</div>
-          </div>`).join('')}
-      </div>
-      <div class="coupon-stake">
-        <label>Valor da aposta (R$)</label>
-        <input type="number" id="stake-input" value="10" min="1" oninput="UI.updateStake()">
-      </div>
-      <div class="coupon-summary">
-        <div class="cs-row"><span>Odd Total</span><span class="cs-val">${totalOdd}</span></div>
-        <div class="cs-row"><span>Apostado</span><span class="cs-val" id="stk-val">R$ 10,00</span></div>
-        <div class="cs-row total"><span>Ganho Potencial</span><span class="cs-val" id="win-val">R$ ${(10 * totalOdd).toFixed(2)}</span></div>
-      </div>
-      <button class="btn-primary btn-apostar" onclick="UI.submitBet()">Fazer Aposta 🎯</button>`;
-  }
-
-  function _liveCardHTML(m, isLive) {
-    const id = m.id || `${m.team1}-${m.team2}`;
-    return `<div class="live-card">
-      <div class="card-meta">
-        ${isLive ? '<span class="live-tag">● AO VIVO</span>' : ''}
-        <span class="card-league">${m.league}</span>
-        <span class="card-time">${m.time}${isLive ? "'" : ""}</span>
-      </div>
-      <div class="card-match">
-        <div class="team">
-          <span class="team-name">${m.team1}</span>
-          ${isLive ? `<span class="team-score">${m.score1}</span>` : ''}
-        </div>
-        <div class="vs-divider">VS</div>
-        <div class="team right">
-          <span class="team-name">${m.team2}</span>
-          ${isLive ? `<span class="team-score">${m.score2}</span>` : ''}
-        </div>
-      </div>
-      <div class="odds-row">
-        <button class="odd-btn" onclick="UI.addBet(event,'${id}','${m.league}','${m.team1} x ${m.team2}','1 (${m.team1})','${m.o1}')">
-          <span class="odd-label">1</span><span class="odd-value">${m.o1}</span>
-        </button>
-        <button class="odd-btn" onclick="UI.addBet(event,'${id}','${m.league}','${m.team1} x ${m.team2}','X','${m.ox}')">
-          <span class="odd-label">X</span><span class="odd-value">${m.ox}</span>
-        </button>
-        <button class="odd-btn" onclick="UI.addBet(event,'${id}','${m.league}','${m.team1} x ${m.team2}','2 (${m.team2})','${m.o2}')">
-          <span class="odd-label">2</span><span class="odd-value">${m.o2}</span>
-        </button>
-      </div>
-    </div>`;
-  }
-
-  function renderLiveGames(games) {
-    const el = document.getElementById('live-grid');
-    if (el) el.innerHTML = games.map(m => _liveCardHTML(m, true)).join('');
-  }
-  function renderUpcomingGames(games) {
-    const el = document.getElementById('upcoming-grid');
-    if (el) el.innerHTML = games.map(m => _liveCardHTML(m, false)).join('');
-  }
-  function renderSuperOdds(odds) {
-    const el = document.getElementById('so-items');
-    if (el) el.innerHTML = odds.map(s =>
-      `<div class="so-item" onclick="UI.addBet(event,'${s.id}','${s.league}','${s.match}','${s.pick}','${s.odd}')">
-        <div class="so-teams">${s.match}</div>
-        <div style="font-size:11px;color:var(--text-muted)">${s.pick}</div>
-        <div class="so-odd">${s.odd} <span class="so-old">${s.oldOdd}</span></div>
-      </div>`).join('');
-  }
-
-  function setBanner(i) {
-    StateManager.setBannerIdx(i);
-    const slides = document.getElementById('banner-slides');
-    if (!slides) return;
-    slides.style.transform = `translateX(-${i * 25}%)`;
-    document.querySelectorAll('#banner-dots .dot').forEach((d, j) => d.classList.toggle('active', j === i));
   }
 
   function setSidebarActive(el) {
@@ -330,347 +344,307 @@ const UI = (() => {
     el.classList.add('active');
   }
 
-  return {
-    showToast, goTo, setSidebarActive, setBanner, renderCoupon,
-    renderLiveGames, renderUpcomingGames, renderSuperOdds,
+  function renderHeaderProfile() {
+    const headerActions = document.querySelector('.header-actions');
+    const user = StateManager.getUser();
+    const profile = StateManager.getUserProfile();
 
-    async handleRegister(btn) {
-      if (!Validators.registerForm()) return;
+    if (!headerActions) return;
+
+    if (!StateManager.isLoggedIn()) {
+      headerActions.innerHTML = `
+        <button class="btn-ghost" onclick="goTo('login')">Entrar</button>
+        <button class="btn-register" onclick="goTo('register')">Registrar</button>
+      `;
+      return;
+    }
+
+    headerActions.innerHTML = `
+      <div class="profile-chip">
+        <span class="profile-chip-name">${user?.email || 'Usuário'}</span>
+        <span class="profile-chip-risk">${profile?.profile_type || user?.risk_profile || 'MODERADO'}</span>
+      </div>
+      <button class="btn-ghost" onclick="logoutUser()">Sair</button>
+    `;
+  }
+
+  function _liveCardHTML(m, isLive) {
+    return `
+      <div class="live-card" onclick="openMatchDetails('${m.id}')">
+        <div class="card-meta">
+          ${isLive ? '<span class="live-tag">● AO VIVO</span>' : ''}
+          <span class="card-league">${m.league}</span>
+          <span class="card-time">${m.time}${isLive ? "'" : ''}</span>
+        </div>
+
+        <div class="card-match">
+          <div class="team">
+            <span class="team-name">${m.team1}</span>
+            ${isLive ? `<span class="team-score">${m.score1}</span>` : ''}
+          </div>
+          <div class="vs-divider">VS</div>
+          <div class="team right">
+            <span class="team-name">${m.team2}</span>
+            ${isLive ? `<span class="team-score">${m.score2}</span>` : ''}
+          </div>
+        </div>
+
+        <div class="odds-row">
+          <button class="odd-btn" onclick="event.stopPropagation(); quickAddMainOdd('${m.id}','${m.league}','${m.team1} x ${m.team2}','home','${m.team1} vence','${m.o1}')">
+            <span class="odd-label">1</span><span class="odd-value">${m.o1}</span>
+          </button>
+          <button class="odd-btn" onclick="event.stopPropagation(); quickAddMainOdd('${m.id}','${m.league}','${m.team1} x ${m.team2}','draw','Empate','${m.ox}')">
+            <span class="odd-label">X</span><span class="odd-value">${m.ox}</span>
+          </button>
+          <button class="odd-btn" onclick="event.stopPropagation(); quickAddMainOdd('${m.id}','${m.league}','${m.team1} x ${m.team2}','away','${m.team2} vence','${m.o2}')">
+            <span class="odd-label">2</span><span class="odd-value">${m.o2}</span>
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderLiveGames(games) {
+    const el = $('live-grid');
+    if (!el) return;
+    el.innerHTML = games.map(m => _liveCardHTML(m, true)).join('');
+  }
+
+  function renderUpcomingGames(games) {
+    const el = $('upcoming-grid');
+    if (!el) return;
+    el.innerHTML = games.map(m => _liveCardHTML(m, false)).join('');
+  }
+
+  function renderSuperOdds(odds) {
+    const el = $('so-items');
+    if (!el) return;
+
+    if (!odds.length) {
+      el.innerHTML = `
+        <div class="so-item">
+          <div class="so-teams">Nenhuma super odd disponível</div>
+          <div style="font-size:11px;color:var(--text-muted)">Carregue recomendações ao vivo</div>
+          <div class="so-odd">--</div>
+        </div>
+      `;
+      return;
+    }
+
+    el.innerHTML = odds.map(s => `
+      <div class="so-item" onclick="addRecommendationToCouponById('${s.match_id}','${s.selection_key}')">
+        <div class="so-teams">${s.match}</div>
+        <div style="font-size:11px;color:var(--text-muted)">${s.pick}</div>
+        <div class="so-odd">${formatOdd(s.odd)} <span class="so-old">${formatOdd(s.oldOdd)}</span></div>
+      </div>
+    `).join('');
+  }
+
+  function renderCoupon() {
+    const bets = StateManager.getBets();
+    const count = $('coupon-count');
+    const body = $('coupon-body');
+
+    if (count) count.textContent = bets.length;
+    if (!body) return;
+
+    if (!bets.length) {
+      body.innerHTML = `
+        <div class="coupon-empty">
+          <div class="coupon-empty-icon">🎯</div>
+          <div class="coupon-empty-text">Seu cupom está vazio.<br>Clique em uma odd para começar!</div>
+        </div>
+      `;
+      return;
+    }
+
+    const totalOdd = bets.reduce((acc, b) => acc * parseFloat(b.odd), 1);
+    const defaultStake = parseFloat($('stake-input')?.value) || 10;
+
+    body.innerHTML = `
+      <div class="coupon-bets">
+        ${bets.map((b, i) => `
+          <div class="coupon-bet-card">
+            <span class="cbc-remove" onclick="removeBet(${i})">✕</span>
+            <div class="cbc-match">${b.match}</div>
+            <div class="cbc-pick">${b.pick}</div>
+            <div class="cbc-odd">${formatOdd(b.odd)}</div>
+          </div>
+        `).join('')}
+      </div>
+
+      <button class="btn-secondary btn-smart-coupon" onclick="composeSmartCoupon()">
+        🦊 Montar múltipla inteligente
+      </button>
+
+      <div class="coupon-stake">
+        <label>Valor da aposta (R$)</label>
+        <input type="number" id="stake-input" value="${defaultStake}" min="1" oninput="updateStake()">
+      </div>
+
+      <div class="coupon-summary">
+        <div class="cs-row"><span>Odd Total</span><span class="cs-val">${formatOdd(totalOdd)}</span></div>
+        <div class="cs-row"><span>Apostado</span><span class="cs-val" id="stk-val">R$ ${defaultStake.toFixed(2)}</span></div>
+        <div class="cs-row total"><span>Ganho Potencial</span><span class="cs-val" id="win-val">R$ ${(defaultStake * totalOdd).toFixed(2)}</span></div>
+      </div>
+
+      <button class="btn-primary btn-apostar" onclick="placeBet()">Fazer Aposta 🎯</button>
+    `;
+  }
+
+  function updateStake() {
+    const stake = parseFloat($('stake-input')?.value) || 0;
+    const totalOdd = StateManager.getBets().reduce((acc, b) => acc * parseFloat(b.odd), 1);
+    const sv = $('stk-val');
+    const wv = $('win-val');
+    if (sv) sv.textContent = `R$ ${stake.toFixed(2)}`;
+    if (wv) wv.textContent = `R$ ${(stake * totalOdd).toFixed(2)}`;
+  }
+
+  async function handleRegister(btn) {
+    if (!Validators.registerForm()) return;
 
     const payload = {
-      nome:          document.getElementById('reg-name').value.trim(),
-      sobrenome:     document.getElementById('reg-last').value.trim(),
-      email:         document.getElementById('reg-email').value.trim().toLowerCase(),
-      cpf:           document.getElementById('reg-cpf').value.replace(/\D/g,''),
-      telefone:      document.getElementById('reg-phone').value.replace(/\D/g,''),
-      password_hash: document.getElementById('reg-pass').value, 
-      risk_profile:  'MODERADO',
+      nome: $('reg-name')?.value.trim(),
+      sobrenome: $('reg-last')?.value.trim() || null,
+      email: $('reg-email')?.value.trim().toLowerCase(),
+      cpf: $('reg-cpf')?.value.replace(/\D/g, ''),
+      telefone: $('reg-phone')?.value.replace(/\D/g, ''),
+      password_hash: $('reg-pass')?.value,
+      risk_profile: 'MODERADO',
     };
 
-      setButtonLoading(btn, true);
+    setButtonLoading(btn, true);
 
-      const res = await ApiService.registerUser(payload);
+    const res = await ApiService.registerUser(payload);
 
-      setButtonLoading(btn, false, 'Criar Conta');
-
-      if (res.success) {
-        StateManager.setSession(`mock_jwt_${Date.now()}`, {
-          name: `${payload.nome} ${payload.sobrenome || ''}`.trim() || 'Apostador',
-          email: payload.email,
-        });
-        this.goTo('home');
-        this.showToast('Conta criada com sucesso! 🎉');
-      } else {
-        const err = document.getElementById('err-pass2');
-        if (err) { err.textContent = res.error; err.classList.add('show'); }
-        console.error('[Register] API error:', res.error);
+    setButtonLoading(btn, false, 'Criar Conta');
+    console.log('LOGIN RESPONSE:', res);
+    if (!res.success) {
+      const err = $('err-pass2');
+      if (err) {
+        err.textContent = res.error || 'Erro ao criar conta.';
+        err.classList.add('show');
       }
-    },
+      return;
+    }
 
-    async handleLogin(btn) {
-      const email = document.getElementById('login-email').value.trim().toLowerCase();
-      const pass  = document.getElementById('login-pass').value;
-      const errEl = document.getElementById('err-login');
+    const loginRes = await ApiService.loginUser({
+      email: payload.email,
+      password: payload.password_hash,
+    });
 
-      if (!email || !pass) {
+    if (!loginRes.success) {
+      showToast('Conta criada, mas o login falhou.');
+      goTo('login');
+      return;
+    }
+
+    StateManager.setSession(loginRes.data.token, loginRes.data.user);
+    goTo('home');
+    showToast('Conta criada com sucesso! 🎉');
+    await bootstrapHomeData();
+  }
+
+  async function handleLogin(btn) {
+    const email = $('login-email')?.value.trim().toLowerCase();
+    const pass = $('login-pass')?.value;
+    const errEl = $('err-login');
+
+    if (!email || !pass) {
+      if (errEl) {
         errEl.textContent = 'Preencha todos os campos';
         errEl.classList.add('show');
-        return;
       }
+      return;
+    }
 
-      setButtonLoading(btn, true);
+    setButtonLoading(btn, true);
 
-      const res = await ApiService.loginUser({ email: email, password: pass });
+    const res = await ApiService.loginUser({ email, password: pass });
 
-      setButtonLoading(btn, false, 'Entrar');
+    setButtonLoading(btn, false, 'Entrar');
 
-      if (res.success) {
-        StateManager.setSession(res.data.token, res.data.user);
-        errEl.classList.remove('show');
-        this.goTo('home');
-        this.showToast('Bem-vindo de volta! 👋');
-      } else {
+    if (!res.success) {
+      if (errEl) {
         errEl.textContent = res.error || 'Erro ao fazer login.';
         errEl.classList.add('show');
-        console.error('[Login] API error:', res.error);
       }
-    },
+      return;
+    }
 
-    addBet(e, gameId, league, match, pick, odd) {
-      e.stopPropagation();
-      const result = StateManager.addBet({ gameId, league, match, pick, odd });
-      this.showToast(result === 'added' ? `Odd ${odd} adicionada! 🎯` : 'Aposta removida');
-    },
-    addBetFromBanner(league, match, pick, odd) {
-      StateManager.addBet({ gameId: `banner_${match}`, league, match, pick, odd });
-      this.showToast(`Odd ${odd} adicionada! 🎯`);
-    },
-    removeBetAt(i) { StateManager.removeBetAt(i); },
-    updateStake() {
-      const stake    = parseFloat(document.getElementById('stake-input')?.value) || 0;
-      const totalOdd = StateManager.getBets().reduce((acc, b) => acc * parseFloat(b.odd), 1);
-      const sv = document.getElementById('stk-val');
-      const wv = document.getElementById('win-val');
-      if (sv) sv.textContent = `R$ ${stake.toFixed(2)}`;
-      if (wv) wv.textContent = `R$ ${(stake * totalOdd).toFixed(2)}`;
-    },
+    if (errEl) errEl.classList.remove('show');
 
-    async submitBet() {
-      const bets     = StateManager.getBets();
-      const stake    = parseFloat(document.getElementById('stake-input')?.value) || 10;
-      const totalOdd = bets.reduce((acc, b) => acc * parseFloat(b.odd), 1);
+    StateManager.setSession(res.data.token, res.data.user);
+    goTo('home');
+    showToast('Bem-vindo de volta! 👋');
+    await bootstrapHomeData();
+  }
 
-      const payload = {
-        selections: bets.map(b => ({ gameId: b.gameId, pick: b.pick, odd: parseFloat(b.odd) })),
-        stake,
-        totalOdd: parseFloat(totalOdd.toFixed(2)),
-      };
+  async function submitBet() {
+    const bets = StateManager.getBets();
+    const user = StateManager.getUser();
 
-      const res = await ApiService.placeBetApi(payload);
+    if (!user?.id) {
+      showToast('Faça login para apostar.');
+      return;
+    }
 
-      if (res.success) {
-        this.showToast('Aposta confirmada! Boa sorte! 🏆');
-        StateManager.clearBets();
-      } else {
-        this.showToast('Erro ao confirmar aposta. Tente novamente.');
-        console.error('[Bet] API error:', res.error);
-      }
-    },
+    if (!bets.length) {
+      showToast('Adicione pelo menos uma aposta no cupom.');
+      return;
+    }
+
+    const stake = parseFloat($('stake-input')?.value) || 10;
+    const totalOdd = bets.reduce((acc, b) => acc * parseFloat(b.odd), 1);
+
+    const payload = {
+      user_id: user.id,
+      selections: bets.map(b => ({
+        match_id: b.gameId,
+        market_type: b.marketType || '1x2',
+        selection_key: b.selectionKey || b.pick,
+        selection_label: b.pick,
+        odd_taken: parseFloat(b.odd),
+      })),
+      stake,
+      totalOdd: parseFloat(totalOdd.toFixed(2)),
+    };
+
+    const res = await ApiService.placeBetApi(payload);
+
+    if (!res.success) {
+      showToast(res.error || 'Erro ao confirmar aposta.');
+      return;
+    }
+
+    showToast('Aposta confirmada! Boa sorte! 🏆');
+    StateManager.clearBets();
+    await refreshUserProfile();
+  }
+
+  return {
+    showToast,
+    goTo,
+    setSidebarActive,
+    renderHeaderProfile,
+    renderLiveGames,
+    renderUpcomingGames,
+    renderSuperOdds,
+    renderCoupon,
+    updateStake,
+    handleRegister,
+    handleLogin,
+    submitBet,
   };
 })();
 
-function goTo(screen)               { UI.goTo(screen); }
-function handleRegister(btn)        { UI.handleRegister(btn); }
-function handleLogin(btn)           { UI.handleLogin(btn); }
-function setSidebarActive(el)       { UI.setSidebarActive(el); }
-function setBanner(i)               { UI.setBanner(i); }
-function addBet(e, ...args)         { UI.addBet(e, ...args); }
-function addBetFromBanner(...args)  { UI.addBetFromBanner(...args); }
-function removeBet(i)               { UI.removeBetAt(i); }
-function updateStake()              { UI.updateStake(); }
-function placeBet()                 { UI.submitBet(); }
-function showToast(msg)             { UI.showToast(msg); }
-function openFoxFromBanner() {
-  const foxFab = document.getElementById('fox-fab');
-  if (!foxFab) return;
-  if (foxFab.getAttribute('aria-expanded') === 'true') return;
-  foxFab.click();
-}
-
-StateManager.on('coupon:changed', () => UI.renderCoupon());
-StateManager.on('games:live',     (games) => UI.renderLiveGames(games));
-StateManager.on('games:upcoming', (games) => UI.renderUpcomingGames(games));
-StateManager.on('odds:super',     (odds)  => UI.renderSuperOdds(odds));
-
-
 const FoxAssistant = (() => {
-  const FOX_CHAMPIONS_MATCHES = [
-    { time: 'Ter · 21:00', home: 'Real Madrid', away: 'Bayern München', pHome: 43, pDraw: 28, pAway: 29 },
-    { time: 'Ter · 21:00', home: 'Arsenal', away: 'PSG', pHome: 39, pDraw: 30, pAway: 31 },
-    { time: 'Qua · 16:00', home: 'Inter', away: 'Barcelona', pHome: 33, pDraw: 28, pAway: 39 },
-    { time: 'Qua · 16:00', home: 'Atlético Madrid', away: 'Borussia Dortmund', pHome: 41, pDraw: 29, pAway: 30 },
-  ];
-  let foxOddsTimerId = null;
-  let foxSuggestionIndex = 0;
-
-  function $(id) { return document.getElementById(id); }
-
-  function getTopPick(match) {
-    const opts = [
-      { key: '1', label: `1 (${match.home})`, value: match.pHome },
-      { key: 'X', label: 'X (Empate)', value: match.pDraw },
-      { key: '2', label: `2 (${match.away})`, value: match.pAway },
-    ];
-    return opts.sort((a, b) => b.value - a.value)[0];
+  function $(id) {
+    return document.getElementById(id);
   }
 
-  function estimateOdd(probabilityPercent) {
-    const safeProb = Math.max(5, Math.min(95, probabilityPercent));
-    return (100 / safeProb * 0.94).toFixed(2);
-  }
-
-  function getBetReason(match, pick) {
-    if (pick.key === '1') return `${match.home} tem a maior probabilidade no cenário atual e o mercado ainda oferece valor nessa entrada.`;
-    if (pick.key === '2') return `${match.away} aparece com o melhor percentual estatístico e a odd sugerida mantém uma boa relação risco-retorno.`;
-    return `O empate tem força estatística relevante para este confronto e pode ser uma opção estratégica para diversificar o cupom.`;
-  }
-
-  function getDailySuggestion() {
-    const ranked = getSuggestions();
-    const best = ranked[0];
-    return {
-      ...best,
-      odd: best.odd,
-      gameId: best.gameId,
-      league: best.league,
-    };
-  }
-
-  function getSuggestions() {
-    return [...FOX_CHAMPIONS_MATCHES]
-      .map((m) => {
-        const pick = getTopPick(m);
-        return {
-          match: m,
-          pick,
-          odd: estimateOdd(pick.value),
-          gameId: `fox_${m.home}_${m.away}`.replace(/\s+/g, '_'),
-          league: 'UEFA Champions League',
-          reason: getBetReason(m, pick),
-        };
-      })
-      .sort((a, b) => b.pick.value - a.pick.value);
-  }
-
-  function addSuggestionToCoupon(suggestion, showToast = true) {
-    const existing = StateManager.getBets().some(
-      (b) => b.gameId === suggestion.gameId && b.pick === suggestion.pick.label
-    );
-    if (existing) return false;
-
-    StateManager.addBet({
-      gameId: suggestion.gameId,
-      league: suggestion.league,
-      match: `${suggestion.match.home} x ${suggestion.match.away}`,
-      pick: suggestion.pick.label,
-      odd: suggestion.odd,
-    });
-
-    if (showToast) UI.showToast(`Aposta adicionada: ${suggestion.pick.label} @ ${suggestion.odd}`);
-    return true;
-  }
-
-  function addDailyPickToCoupon(showToast = true) {
-    return addSuggestionToCoupon(getDailySuggestion(), showToast);
-  }
-
-  function getNextSuggestion() {
-    const ranked = getSuggestions();
-    const chosen = ranked[foxSuggestionIndex % ranked.length];
-    foxSuggestionIndex = (foxSuggestionIndex + 1) % ranked.length;
-    return chosen;
-  }
-
-  function renderExtraTickets() {
-    const container = $('fox-extra-tickets');
-    if (!container) return;
-    const suggestions = getSuggestions().slice(1, 4);
-
-    container.innerHTML = `
-      <div class="fox-extra-title">Outras apostas da Raposa</div>
-      <div class="fox-extra-list">
-        ${suggestions.map((s, idx) => {
-          const inCoupon = StateManager.getBets().some(
-            (b) => b.gameId === s.gameId && b.pick === s.pick.label
-          );
-          return `
-            <article class="fox-extra-card">
-              <div class="fox-extra-match">${s.match.home} x ${s.match.away}</div>
-              <div class="fox-extra-meta">${s.pick.label} (${s.pick.value}%) · odd ${s.odd}</div>
-              <div class="fox-extra-reason">${s.reason}</div>
-              <button class="fox-extra-btn" type="button" onclick="chooseFoxTicket(${idx})" ${inCoupon ? 'disabled' : ''}>
-                ${inCoupon ? 'Ja no cupom' : 'Escolher este bilhete'}
-              </button>
-            </article>
-          `;
-        }).join('')}
-      </div>
-    `;
-  }
-
-  function renderWelcomeStory() {
-    const storyEl = $('fox-dash-story');
-    if (!storyEl) return;
-
-    const bestMatches = [...FOX_CHAMPIONS_MATCHES]
-      .map((m) => ({ match: m, pick: getTopPick(m) }))
-      .sort((a, b) => b.pick.value - a.pick.value)
-      .slice(0, 2);
-
-    const tips = bestMatches.map(({ match, pick }) =>
-      `<li><strong>${match.home} x ${match.away}</strong>: ${pick.label} (${pick.value}%)</li>`
-    ).join('');
-    const suggestion = getDailySuggestion();
-
-    storyEl.innerHTML = `
-      <span class="fox-story-title">Eu sou a Raposa da Sorte — sua IA de leitura de apostas. 🦊</span>
-      <p class="fox-story-text">Uso dados em tempo real pra identificar padrões que a maioria ignora.</p>
-      <p class="fox-story-text">📈 Probabilidade, tendência e pressão de mercado — tudo processado pra te entregar a melhor decisão possível em segundos.</p>
-      <p class="fox-story-text">🚀 Um clique e eu monto sua entrada otimizada — e logo abaixo eu explico o motivo da sugestão para você decidir com clareza.</p>
-      <div class="fox-story-highlight">
-        <div class="fox-story-urgency">⚠️ 38 pessoas analisando essa aposta agora</div>
-        <div class="fox-story-timer" id="fox-story-timer">Odds atualizadas em 01:59</div>
-        <span class="fox-story-highlight-label">Aposta do dia</span>
-        <strong>${suggestion.match.home} x ${suggestion.match.away}</strong>
-        <span>${suggestion.pick.label} (${suggestion.pick.value}%) · odd sugerida ${suggestion.odd}</span>
-        <button type="button" class="fox-story-btn" id="fox-main-cta" onclick="letFoxSetMyBet()">🧠 Outra aposta!</button>
-        <p class="fox-story-reason" id="fox-story-reason">🔎 Motivo da aposta: assim que você clicar, eu explico abaixo por que essa entrada foi sugerida com base em probabilidade e momento do jogo.</p>
-        <button type="button" class="fox-story-details-btn" onclick="openFutureDashboard()">See more details</button>
-      </div>
-      <ul class="fox-story-picks">${tips}</ul>
-    `;
-  }
-
-  function startOddsTimer() {
-    if (foxOddsTimerId) clearInterval(foxOddsTimerId);
-    const timerEl = $('fox-story-timer');
-    if (!timerEl) return;
-
-    let remaining = 119;
-    const render = () => {
-      const mm = String(Math.floor(remaining / 60)).padStart(2, '0');
-      const ss = String(remaining % 60).padStart(2, '0');
-      timerEl.textContent = `Odds atualizadas em ${mm}:${ss}`;
-      remaining = remaining <= 0 ? 119 : remaining - 1;
-    };
-
-    render();
-    foxOddsTimerId = setInterval(render, 1000);
-  }
-
-  function renderFoxDash() {
-    const container = $('fox-dash-matches');
-    if (!container) return;
-    const rows = FOX_CHAMPIONS_MATCHES;
-    container.innerHTML = rows.map((m) => `
-      <article class="fox-match-card">
-        <div class="fox-match-meta">${m.time}</div>
-        <div class="fox-match-teams">
-          <span class="fox-match-team fox-match-team--home">${m.home}</span>
-          <span class="fox-match-vs">vs</span>
-          <span class="fox-match-team fox-match-team--away">${m.away}</span>
-        </div>
-        <div class="fox-prob-bar" role="img" aria-label="Probabilidade 1 ${m.pHome}%, empate ${m.pDraw}%, 2 ${m.pAway}%">
-          <div class="fox-prob-seg fox-prob-seg--home" style="width:${m.pHome}%"></div>
-          <div class="fox-prob-seg fox-prob-seg--draw" style="width:${m.pDraw}%"></div>
-          <div class="fox-prob-seg fox-prob-seg--away" style="width:${m.pAway}%"></div>
-        </div>
-        <div class="fox-prob-legend">
-          <span><span class="fox-dot fox-dot--home"></span>1 ${m.pHome}%</span>
-          <span><span class="fox-dot fox-dot--draw"></span>X ${m.pDraw}%</span>
-          <span><span class="fox-dot fox-dot--away"></span>2 ${m.pAway}%</span>
-        </div>
-      </article>`).join('');
-  }
-
-  function resetPanel() {
-    const container = $('fox-dash-matches');
-    if (container) container.innerHTML = '';
-    closePanel();
-  }
-
-  function syncAuth() {
-    const box = $('fox-assistant');
-    if (!box) return;
-    if (StateManager.isLoggedIn()) {
-      box.removeAttribute('hidden');
-      box.setAttribute('aria-hidden', 'false');
-    } else {
-      box.setAttribute('hidden', '');
-      box.setAttribute('aria-hidden', 'true');
-      resetPanel();
-    }
-  }
+  let timerId = null;
 
   function panelIsOpen() {
     const panel = $('fox-panel');
@@ -681,29 +655,31 @@ const FoxAssistant = (() => {
   function closePanel() {
     const panel = $('fox-panel');
     const fab = $('fox-fab');
+
     if (panel) {
       panel.hidden = true;
       panel.setAttribute('hidden', '');
     }
     if (fab) fab.setAttribute('aria-expanded', 'false');
-    if (foxOddsTimerId) {
-      clearInterval(foxOddsTimerId);
-      foxOddsTimerId = null;
+
+    if (timerId) {
+      clearInterval(timerId);
+      timerId = null;
     }
   }
 
   function openPanel() {
     const panel = $('fox-panel');
     const fab = $('fox-fab');
+
     if (panel) {
       panel.hidden = false;
       panel.removeAttribute('hidden');
     }
     if (fab) fab.setAttribute('aria-expanded', 'true');
+
     renderWelcomeStory();
     startOddsTimer();
-    renderFoxDash();
-    renderExtraTickets();
     $('fox-input')?.focus();
   }
 
@@ -712,130 +688,505 @@ const FoxAssistant = (() => {
     else openPanel();
   }
 
+  function syncAuth() {
+    const box = $('fox-assistant');
+    if (!box) return;
+
+    if (StateManager.isLoggedIn()) {
+      box.removeAttribute('hidden');
+      box.setAttribute('aria-hidden', 'false');
+    } else {
+      box.setAttribute('hidden', '');
+      box.setAttribute('aria-hidden', 'true');
+      closePanel();
+    }
+  }
+
+  function startOddsTimer() {
+    const timerEl = document.getElementById('fox-story-timer');
+    if (!timerEl) return;
+
+    if (timerId) clearInterval(timerId);
+
+    let remaining = 119;
+    const render = () => {
+      const mm = String(Math.floor(remaining / 60)).padStart(2, '0');
+      const ss = String(remaining % 60).padStart(2, '0');
+      timerEl.textContent = `Odds atualizadas em ${mm}:${ss}`;
+      remaining = remaining <= 0 ? 119 : remaining - 1;
+    };
+
+    render();
+    timerId = setInterval(render, 1000);
+  }
+
+  function renderWelcomeStory() {
+    const story = $('fox-dash-story');
+    const league = $('fox-dash-league');
+    const profile = StateManager.getUserProfile();
+
+    if (!story) return;
+
+    story.innerHTML = `
+      <span class="fox-story-title">Eu sou a Raposa da Sorte — sua IA de leitura de apostas. 🦊</span>
+      <p class="fox-story-text">Analiso o mercado, o modelo estatístico e o seu perfil para sugerir entradas mais alinhadas ao seu estilo.</p>
+      <div class="fox-story-highlight">
+        <div class="fox-story-urgency">Perfil atual: <strong>${profile?.profile_type || 'MODERADO'}</strong></div>
+        <div class="fox-story-timer" id="fox-story-timer">Odds atualizadas em 01:59</div>
+        <span class="fox-story-highlight-label">O que eu faço</span>
+        <strong>Mercado + modelo + perfil do usuário</strong>
+        <span>Abra um jogo ou me pergunte qual a melhor entrada para você agora.</span>
+        <button type="button" class="fox-story-btn" onclick="composeSmartCoupon()">🧠 Montar múltipla inteligente</button>
+        <p class="fox-story-reason">Dica: clique em um jogo ao vivo para eu carregar a análise personalizada daquela partida.</p>
+      </div>
+    `;
+
+    if (league) {
+      league.textContent = profile
+        ? `Perfil de risco: ${profile.profile_type} · Score ${profile.risk_score}`
+        : 'Perfil ainda não carregado';
+    }
+
+    renderRecommendations([]);
+  }
+
+  function renderRecommendations(recommendations) {
+    const matches = $('fox-dash-matches');
+    const extra = $('fox-extra-tickets');
+    const currentMatchId = StateManager.getCurrentMatchId();
+
+    if (!matches || !extra) return;
+
+    if (!recommendations.length) {
+      matches.innerHTML = `
+        <article class="fox-match-card">
+          <div class="fox-match-meta">Sem partida selecionada</div>
+          <div class="fox-match-teams">
+            <span class="fox-match-team fox-match-team--home">Abra um jogo</span>
+            <span class="fox-match-vs">·</span>
+            <span class="fox-match-team fox-match-team--away">para ver análise</span>
+          </div>
+        </article>
+      `;
+      extra.innerHTML = '';
+      return;
+    }
+
+    matches.innerHTML = recommendations.map((rec, idx) => `
+      <article class="fox-match-card">
+        <div class="fox-match-meta">${rec.market_type} · ${getRiskEmoji(rec.risk_level)} ${rec.risk_level}</div>
+        <div class="fox-match-teams">
+          <span class="fox-match-team fox-match-team--home">${rec.selection_label}</span>
+          <span class="fox-match-vs">odd</span>
+          <span class="fox-match-team fox-match-team--away">${formatOdd(rec.market_odd)}</span>
+        </div>
+        <div class="fox-prob-legend">
+          <span>Modelo: ${(Number(rec.model_probability) * 100).toFixed(1)}%</span>
+          <span>Justa: ${formatOdd(rec.model_odd)}</span>
+          <span>Edge: ${Number(rec.edge_pct).toFixed(2)}%</span>
+        </div>
+        <p class="fox-story-text" style="margin-top:10px;">${rec.assistant_text}</p>
+        <button class="fox-extra-btn" type="button" onclick="addRecommendationToCoupon(${idx})">
+          Adicionar ao cupom
+        </button>
+      </article>
+    `).join('');
+
+    extra.innerHTML = `
+      <div class="fox-extra-title">Outras ações</div>
+      <div class="fox-extra-list">
+        <article class="fox-extra-card">
+          <div class="fox-extra-match">Partida selecionada</div>
+          <div class="fox-extra-meta">${currentMatchId}</div>
+          <div class="fox-extra-reason">Posso explicar por que a principal recomendação foi escolhida, comparar risco ou montar uma múltipla com base no seu perfil.</div>
+          <button class="fox-extra-btn" type="button" onclick="askFoxPreset('Qual a melhor aposta para mim agora nesse jogo?')">
+            Perguntar à Raposa
+          </button>
+        </article>
+      </div>
+    `;
+  }
+
+  async function ask(message) {
+    const user = StateManager.getUser();
+    if (!user?.id) {
+      UI.showToast('Faça login para falar com a Raposa.');
+      return;
+    }
+
+    const res = await ApiService.assistantChat({
+      user_id: user.id,
+      match_id: StateManager.getCurrentMatchId(),
+      message,
+      coupon_matches: StateManager.getBets().map(b => b.gameId),
+    });
+
+    if (!res.success) {
+      UI.showToast(res.error || 'A Raposa não conseguiu responder.');
+      return;
+    }
+
+    const story = $('fox-dash-story');
+    if (story) {
+      story.innerHTML = `
+        <span class="fox-story-title">Raposa da Sorte</span>
+        <p class="fox-story-text">${res.data.answer}</p>
+      `;
+    }
+  }
+
   function init() {
     syncAuth();
     StateManager.on('session:changed', syncAuth);
+
     $('fox-fab')?.addEventListener('click', (e) => {
       e.stopPropagation();
       togglePanel();
     });
+
     $('fox-close')?.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
       closePanel();
     });
-    $('fox-form')?.addEventListener('submit', (e) => {
+
+    $('fox-form')?.addEventListener('submit', async (e) => {
       e.preventDefault();
+      const input = $('fox-input');
+      const message = input?.value.trim();
+      if (!message) return;
+      await ask(message);
+      input.value = '';
     });
+
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && panelIsOpen()) closePanel();
     });
   }
 
-  return { init, syncAuth, addDailyPickToCoupon, getDailySuggestion, getBetReason, getNextSuggestion, addSuggestionToCoupon, getSuggestions, renderExtraTickets };
+  return {
+    init,
+    openPanel,
+    closePanel,
+    renderWelcomeStory,
+    renderRecommendations,
+    ask,
+  };
 })();
 
-function letFoxSetMyBet() {
-  const suggestion = FoxAssistant.getNextSuggestion();
-  const reason = FoxAssistant.getBetReason(suggestion.match, suggestion.pick);
-  const added = FoxAssistant.addSuggestionToCoupon(suggestion, true);
-  const reasonEl = document.getElementById('fox-story-reason');
-  const ctaEl = document.getElementById('fox-main-cta');
-  if (!reasonEl) return;
+async function refreshUserProfile() {
+  const user = StateManager.getUser();
+  if (!user?.id) return;
 
-  if (added) {
-    reasonEl.innerHTML = [
-      `Jogo escolhido: <strong>${suggestion.match.home} x ${suggestion.match.away}</strong>.`,
-      `Odd definida: <strong>${suggestion.odd}</strong> com entrada em <strong>${suggestion.pick.label}</strong>.`,
-      `Motivo: ${reason}`,
-    ].join('<br>');
-    if (ctaEl) ctaEl.textContent = '🧠 Outra aposta!';
-    FoxAssistant.renderExtraTickets();
+  const res = await ApiService.getUserProfile(user.id);
+  if (res.success) {
+    StateManager.setUserProfile(res.data);
+    UI.renderHeaderProfile();
+  }
+}
+
+async function loadSuperOddsFromRecommendations() {
+  const user = StateManager.getUser();
+  if (!user?.id) return;
+
+  const games = StateManager.getLiveGames().slice(0, 3);
+  if (!games.length) {
+    StateManager.setSuperOdds([]);
     return;
   }
 
-  reasonEl.innerHTML = [
-    `Essa entrada já está no seu cupom.`,
-    `Odd atual: <strong>${suggestion.odd}</strong> em <strong>${suggestion.pick.label}</strong>.`,
-    `Motivo: ${reason}`,
-  ].join('<br>');
-  if (ctaEl) ctaEl.textContent = '🧠 Outra aposta!';
-  FoxAssistant.renderExtraTickets();
-}
+  const items = [];
 
-function chooseFoxTicket(index) {
-  const suggestions = FoxAssistant.getSuggestions().slice(1, 4);
-  const chosen = suggestions[index];
-  if (!chosen) return;
-  const added = FoxAssistant.addSuggestionToCoupon(chosen, true);
-  const reasonEl = document.getElementById('fox-story-reason');
-  if (reasonEl) {
-    reasonEl.innerHTML = added
-      ? [
-          `Bilhete escolhido: <strong>${chosen.match.home} x ${chosen.match.away}</strong>.`,
-          `Entrada: <strong>${chosen.pick.label}</strong> com odd <strong>${chosen.odd}</strong>.`,
-          `Motivo: ${chosen.reason}`,
-        ].join('<br>')
-      : `Esse bilhete já está no seu cupom.`;
+  for (const game of games) {
+    const recsRes = await ApiService.getLiveRecommendations(game.id, user.id);
+    if (!recsRes.success) continue;
+
+    const rec = recsRes.data.recommendations?.[0];
+    if (!rec) continue;
+
+    items.push({
+      id: `${game.id}_${rec.selection_key}`,
+      match_id: game.id,
+      selection_key: rec.selection_key,
+      match: `${game.team1} x ${game.team2}`,
+      pick: rec.selection_label,
+      odd: Number(rec.market_odd),
+      oldOdd: Number(rec.model_odd),
+      league: game.league,
+    });
   }
-  FoxAssistant.renderExtraTickets();
+
+  StateManager.setSuperOdds(items);
 }
 
-function openFutureDashboard() {
-  window.location.href = 'dashboard-futuro.html';
+async function bootstrapHomeData() {
+  const [liveRes, upcomingRes] = await Promise.all([
+    ApiService.getLiveGames(),
+    ApiService.getUpcomingGames(),
+  ]);
+
+  if (liveRes.success) {
+    StateManager.setLiveGames(normalizeLiveGames(liveRes.data));
+  }
+
+  if (upcomingRes.success) {
+    StateManager.setUpcomingGames(normalizeUpcomingGames(upcomingRes.data));
+  }
+
+  await refreshUserProfile();
+  await loadSuperOddsFromRecommendations();
+
+  StateManager.startLivePolling();
 }
 
+async function openMatchDetails(matchId) {
+  const user = StateManager.getUser();
+  if (!user?.id) {
+    UI.showToast('Faça login para ver análise do jogo.');
+    return;
+  }
+
+  const [marketsRes, recsRes] = await Promise.all([
+    ApiService.getGameMarkets(matchId),
+    ApiService.getLiveRecommendations(matchId, user.id),
+  ]);
+
+  if (!marketsRes.success || !recsRes.success) {
+    UI.showToast('Não foi possível carregar a análise da partida.');
+    return;
+  }
+
+  StateManager.setCurrentMatch(
+    matchId,
+    marketsRes.data.markets || [],
+    recsRes.data.recommendations || []
+  );
+
+  const league = document.getElementById('fox-dash-league');
+  if (league) {
+    league.textContent = recsRes.data.assistant_summary || 'Análise carregada';
+  }
+
+  FoxAssistant.openPanel();
+  FoxAssistant.renderRecommendations(recsRes.data.recommendations || []);
+}
+
+function quickAddMainOdd(gameId, league, match, selectionKey, pick, odd) {
+  const result = StateManager.addBet({
+    gameId,
+    league,
+    match,
+    pick,
+    odd: parseFloat(odd),
+    marketType: '1x2',
+    selectionKey,
+  });
+
+  UI.showToast(result === 'added' ? `Odd ${odd} adicionada! 🎯` : 'Aposta removida');
+}
+
+function addRecommendationToCoupon(index) {
+  const currentMatchId = StateManager.getCurrentMatchId();
+  const rec = StateManager.getCurrentRecommendations()[index];
+  const liveGame = StateManager.getLiveGames().find(g => g.id === currentMatchId);
+
+  if (!rec || !liveGame) return;
+
+  const result = StateManager.addBet({
+    gameId: currentMatchId,
+    league: liveGame.league,
+    match: `${liveGame.team1} x ${liveGame.team2}`,
+    pick: rec.selection_label,
+    odd: parseFloat(rec.market_odd),
+    marketType: rec.market_type,
+    selectionKey: rec.selection_key,
+  });
+
+  UI.showToast(result === 'added' ? 'Recomendação adicionada ao cupom! 🦊' : 'Aposta removida');
+}
+
+async function addRecommendationToCouponById(matchId, selectionKey) {
+  const user = StateManager.getUser();
+  if (!user?.id) return;
+
+  const recsRes = await ApiService.getLiveRecommendations(matchId, user.id);
+  if (!recsRes.success) {
+    UI.showToast('Não foi possível carregar a recomendação.');
+    return;
+  }
+
+  const rec = (recsRes.data.recommendations || []).find(r => r.selection_key === selectionKey);
+  const liveGame = StateManager.getLiveGames().find(g => g.id === matchId);
+
+  if (!rec || !liveGame) return;
+
+  const result = StateManager.addBet({
+    gameId: matchId,
+    league: liveGame.league,
+    match: `${liveGame.team1} x ${liveGame.team2}`,
+    pick: rec.selection_label,
+    odd: parseFloat(rec.market_odd),
+    marketType: rec.market_type,
+    selectionKey: rec.selection_key,
+  });
+
+  UI.showToast(result === 'added' ? 'Super odd adicionada! ⚡' : 'Aposta removida');
+}
+
+async function composeSmartCoupon() {
+  const user = StateManager.getUser();
+  const profile = StateManager.getUserProfile();
+  const games = StateManager.getLiveGames();
+
+  if (!user?.id) {
+    UI.showToast('Faça login para montar a múltipla.');
+    return;
+  }
+
+  if (!games.length) {
+    UI.showToast('Nenhum jogo ao vivo disponível.');
+    return;
+  }
+
+  const res = await ApiService.composeCoupon({
+    user_id: user.id,
+    matches: games.slice(0, 3).map(g => g.id),
+    max_selections: 3,
+    target_risk: profile?.profile_type || user.risk_profile || 'MODERADO',
+  });
+
+  if (!res.success) {
+    UI.showToast(res.error || 'Não foi possível montar a múltipla.');
+    return;
+  }
+
+  StateManager.clearBets();
+
+  const selections = res.data.coupon?.selections || [];
+  selections.forEach(sel => {
+    StateManager.addBet({
+      gameId: sel.match_id,
+      league: 'Cupom Inteligente',
+      match: sel.selection_label,
+      pick: sel.selection_label,
+      odd: parseFloat(sel.market_odd || sel.odd),
+      marketType: sel.market_type,
+      selectionKey: sel.selection_key,
+    });
+  });
+
+  UI.showToast('Múltipla inteligente montada! 🦊');
+
+  if (res.data.coupon?.assistant_text) {
+    FoxAssistant.openPanel();
+    const story = document.getElementById('fox-dash-story');
+    if (story) {
+      story.innerHTML = `
+        <span class="fox-story-title">Raposa da Sorte</span>
+        <p class="fox-story-text">${res.data.coupon.assistant_text}</p>
+      `;
+    }
+  }
+}
+
+async function askFoxPreset(message) {
+  FoxAssistant.openPanel();
+  await FoxAssistant.ask(message);
+}
+
+function logoutUser() {
+  StateManager.logout();
+  UI.renderHeaderProfile();
+  UI.goTo('login');
+  UI.showToast('Sessão encerrada.');
+}
+
+function goTo(screen) { UI.goTo(screen); }
+function handleRegister(btn) { UI.handleRegister(btn); }
+function handleLogin(btn) { UI.handleLogin(btn); }
+function setSidebarActive(el) { UI.setSidebarActive(el); }
+function addBet(e, ...args) { quickAddMainOdd(...args); }
+function removeBet(i) { StateManager.removeBetAt(i); }
+function updateStake() { UI.updateStake(); }
+function placeBet() { UI.submitBet(); }
+function showToast(msg) { UI.showToast(msg); }
+function openFoxFromBanner() { FoxAssistant.openPanel(); }
+function openFutureDashboard() { window.location.href = 'dashboard-futuro.html'; }
+
+StateManager.on('coupon:changed', () => UI.renderCoupon());
+StateManager.on('games:live', (games) => UI.renderLiveGames(games));
+StateManager.on('games:upcoming', (games) => UI.renderUpcomingGames(games));
+StateManager.on('odds:super', (odds) => UI.renderSuperOdds(odds));
+StateManager.on('profile:changed', () => UI.renderHeaderProfile());
 
 (function initParticles() {
-  const canvas   = document.getElementById('particles-canvas');
+  const canvas = document.getElementById('particles-canvas');
+  if (!canvas || typeof THREE === 'undefined') return;
+
   const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
 
-  const scene  = new THREE.Scene();
+  const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
   camera.position.z = 28;
   camera.position.y = 8;
   camera.rotation.x = -0.28;
 
-  const COLS = 40, ROWS = 30;
-  const geometry  = new THREE.BufferGeometry();
+  const COLS = 40;
+  const ROWS = 30;
+  const geometry = new THREE.BufferGeometry();
   const positions = new Float32Array(COLS * ROWS * 3);
-  const colors    = new Float32Array(COLS * ROWS * 3);
+  const colors = new Float32Array(COLS * ROWS * 3);
 
   let k = 0;
   for (let i = 0; i < ROWS; i++) {
     for (let j = 0; j < COLS; j++) {
-      positions[k * 3]     = (j - COLS / 2) * 1.2;
+      positions[k * 3] = (j - COLS / 2) * 1.2;
       positions[k * 3 + 1] = 0;
       positions[k * 3 + 2] = (i - ROWS / 2) * 1.2;
-      colors[k * 3] = 0.22; colors[k * 3 + 1] = 0.9; colors[k * 3 + 2] = 0.49;
+      colors[k * 3] = 0.22;
+      colors[k * 3 + 1] = 0.9;
+      colors[k * 3 + 2] = 0.49;
       k++;
     }
   }
-  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  geometry.setAttribute('color',    new THREE.BufferAttribute(colors,    3));
 
-  const material = new THREE.PointsMaterial({ size: 0.18, vertexColors: true, transparent: true, opacity: 0.55, sizeAttenuation: true });
-  const points   = new THREE.Points(geometry, material);
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+  const material = new THREE.PointsMaterial({
+    size: 0.08,
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.9,
+  });
+
+  const points = new THREE.Points(geometry, material);
   scene.add(points);
 
-  let t = 0;
-  (function animate() {
-    requestAnimationFrame(animate);
-    t += 0.018;
+  function animate(t) {
     const pos = geometry.attributes.position.array;
     let idx = 0;
+
     for (let i = 0; i < ROWS; i++) {
       for (let j = 0; j < COLS; j++) {
-        pos[idx * 3 + 1] = Math.sin(i * 0.5 + t) * 1.2 + Math.cos(j * 0.4 + t * 0.7) * 0.8;
+        const x = (j - COLS / 2) * 1.2;
+        const z = (i - ROWS / 2) * 1.2;
+        pos[idx * 3 + 1] =
+          Math.sin((x + t * 0.0018) * 0.75) * 0.55 +
+          Math.cos((z + t * 0.0012) * 0.6) * 0.45;
         idx++;
       }
     }
+
     geometry.attributes.position.needsUpdate = true;
-    points.rotation.y = Math.sin(t * 0.12) * 0.05;
+    points.rotation.y += 0.0008;
     renderer.render(scene, camera);
-  })();
+    requestAnimationFrame(animate);
+  }
+
+  requestAnimationFrame(animate);
 
   window.addEventListener('resize', () => {
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -844,135 +1195,23 @@ function openFutureDashboard() {
   });
 })();
 
-
-const RiskShader = (() => {
-  const configs = {
-    low:  { base: [5,20,45],   accent: [18,160,90],  speed: 0.55 },
-    mid:  { base: [10,15,60],  accent: [56,140,180], speed: 0.90 },
-    high: { base: [50,10,40],  accent: [200,80,30],  speed: 1.35 },
-  };
-  const states = {};
-
-  const VERT = `attribute vec2 a_pos; void main(){gl_Position=vec4(a_pos,0,1);}`;
-  const FRAG = `
-    precision mediump float;
-    uniform float u_time,u_speed,u_hover; uniform vec2 u_res; uniform vec3 u_base,u_accent;
-    float noise(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
-    float sn(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(noise(i),noise(i+vec2(1,0)),f.x),mix(noise(i+vec2(0,1)),noise(i+vec2(1,1)),f.x),f.y);}
-    float fbm(vec2 p){float v=0.,a=.5;for(int i=0;i<4;i++){v+=a*sn(p);p*=2.;a*=.5;}return v;}
-    void main(){
-      vec2 uv=gl_FragCoord.xy/u_res; uv.y=1.-uv.y;
-      float t=u_time*u_speed*(1.+u_hover*.8);
-      vec2 q=vec2(fbm(uv+t*.12),fbm(uv+t*.08+1.3));
-      vec2 r=vec2(fbm(uv+1.7*q+vec2(1.7,9.2)+t*.15),fbm(uv+1.7*q+vec2(8.3,2.8)+t*.1));
-      float f=fbm(uv+1.9*r);
-      vec3 col=mix(u_base/255.,u_accent/255.,clamp(f*f*4.,0.,1.));
-      col=mix(col,vec3(.22,.9,.49)*.5,clamp(length(q)*.25,0.,.3)*u_hover);
-      float edge=length(uv-.5)*2.; col*=1.-edge*.3; col=mix(col,col*1.3,f*.4);
-      gl_FragColor=vec4(col*.92,1.);
-    }`;
-
-  function _compile(gl, type, src) {
-    const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); return s;
-  }
-  function _init(id) {
-    const canvas = document.getElementById('rc-' + id);
-    if (!canvas) return;
-    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-    if (!gl) return;
-    const prog = gl.createProgram();
-    gl.attachShader(prog, _compile(gl, gl.VERTEX_SHADER, VERT));
-    gl.attachShader(prog, _compile(gl, gl.FRAGMENT_SHADER, FRAG));
-    gl.linkProgram(prog); gl.useProgram(prog);
-    const buf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), gl.STATIC_DRAW);
-    const loc = gl.getAttribLocation(prog, 'a_pos');
-    gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-    states[id] = {
-      gl, prog,
-      uTime:  gl.getUniformLocation(prog,'u_time'),
-      uRes:   gl.getUniformLocation(prog,'u_res'),
-      uSpeed: gl.getUniformLocation(prog,'u_speed'),
-      uHover: gl.getUniformLocation(prog,'u_hover'),
-      uBase:  gl.getUniformLocation(prog,'u_base'),
-      uAccent:gl.getUniformLocation(prog,'u_accent'),
-      canvas, config: configs[id], hover: 0, t: Math.random() * 100,
-    };
-  }
-  function _resize(id) {
-    const s = states[id]; if (!s) return;
-    const rect = s.canvas.getBoundingClientRect();
-    const dpr  = Math.min(window.devicePixelRatio || 1, 2);
-    s.canvas.width  = rect.width  * dpr;
-    s.canvas.height = rect.height * dpr;
-    s.gl.viewport(0, 0, s.canvas.width, s.canvas.height);
-  }
-  function _tick() {
-    requestAnimationFrame(_tick);
-    for (const id in states) {
-      const s = states[id]; if (!s) continue;
-      if (!s.canvas.width || !s.canvas.height) _resize(id);
-      s.t += 0.013;
-      const { gl, uTime, uRes, uSpeed, uHover, uBase, uAccent, canvas, config } = s;
-      gl.uniform1f(uTime, s.t); gl.uniform2f(uRes, canvas.width, canvas.height);
-      gl.uniform1f(uSpeed, config.speed); gl.uniform1f(uHover, s.hover);
-      gl.uniform3fv(uBase, config.base); gl.uniform3fv(uAccent, config.accent);
-      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-    }
-  }
-
-  return {
-    init() {
-      ['low','mid','high'].forEach(id => { _init(id); _resize(id); });
-      _tick();
-    },
-    setHover(id, val)  { if (states[id]) states[id].hover = val; },
-    getState(id)       { return states[id]; },
-  };
-})();
-
-function selectRisk(btn, event) {
-  event.preventDefault();
-  const risk = btn.dataset.risk;
-  document.querySelectorAll('.risk-btn').forEach(b => b.classList.remove('risk-selected'));
-  btn.classList.add('risk-selected');
-  StateManager.setRisk(risk);
-  ['low','mid','high'].forEach(r => RiskShader.setHover(r, r === risk ? 1 : 0));
-  const rect = btn.getBoundingClientRect();
-  const x = event.clientX - rect.left, y = event.clientY - rect.top;
-  const rip = document.getElementById('rrip-' + risk);
-  if (rip) {
-    const r = document.createElement('div');
-    r.className = 'risk-ripple';
-    r.style.cssText = `left:${x}px;top:${y}px;width:60px;height:60px;margin:-30px 0 0 -30px`;
-    rip.appendChild(r); setTimeout(() => r.remove(), 600);
-  }
-}
-document.querySelectorAll('.risk-btn').forEach(btn => {
-  const id = btn.dataset.risk;
-  btn.addEventListener('mouseenter', () => { if (!btn.classList.contains('risk-selected')) RiskShader.setHover(id, 1); });
-  btn.addEventListener('mouseleave', () => { if (!btn.classList.contains('risk-selected')) RiskShader.setHover(id, 0); });
-});
-
-
 window.addEventListener('load', async () => {
-
-  setTimeout(() => RiskShader.init(), 120);
-
-  const [liveRes, upcomingRes, oddsRes] = await Promise.all([
-    ApiService.getLiveGames(),
-    ApiService.getUpcomingGames(),
-    ApiService.getSuperOdds(),
-  ]);
-
-  if (liveRes.success)     StateManager.setLiveGames(liveRes.data);
-  if (upcomingRes.success) StateManager.setUpcomingGames(upcomingRes.data);
-  if (oddsRes.success)     StateManager.setSuperOdds(oddsRes.data);
-
-  StateManager.startLivePolling(30000);
-
+  UI.renderHeaderProfile();
   UI.renderCoupon();
-
   FoxAssistant.init();
+
+  if (StateManager.isLoggedIn()) {
+    UI.goTo('home');
+    await bootstrapHomeData();
+  } else {
+    UI.goTo('login');
+  }
 });
+
+window.openOddsPage = function () {
+  window.location.href = 'odds-jogos.html';
+};
+
+window.composeSmartCouponFromOddsPage = async function () {
+  await composeSmartCoupon();
+};
