@@ -1,30 +1,24 @@
 from __future__ import annotations
 
 import json
+import os
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import joblib
 import pandas as pd
+import psycopg
 from psycopg.rows import dict_row
-from sklearn.compose import ColumnTransformer
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.impute import SimpleImputer
-from sklearn.metrics import (
-    accuracy_score,
-    balanced_accuracy_score,
-    classification_report,
-    confusion_matrix,
-)
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 
-from database.db import get_db_pool
+PROJECT_DIR = Path(__file__).resolve().parent.parent.parent
 
-TARGET_COLUMN = "target_result"
-DATE_COLUMN = "match_date"
-ARTIFACT_DIR = Path("artifacts/match_result_model_rf_pre_game_v2")
+PREGAME_MODEL_PATH = PROJECT_DIR / "artifacts" / "match_result_model_rf_pre_game_v2" / "pipeline.joblib"
+PREGAME_LABEL_ENCODER_PATH = PROJECT_DIR / "artifacts" / "match_result_model_rf_pre_game_v2" / "label_encoder.joblib"
+PREGAME_FEATURE_COLUMNS_PATH = PROJECT_DIR / "artifacts" / "match_result_model_rf_pre_game_v2" / "all_feature_columns.json"
+BOOKMAKER_MARGIN = 0.06
 
-NUMERIC_FEATURE_COLUMNS = [
+CURRENT_PREGAME_NUMERIC_COLUMNS = [
     "home_last5_points_avg",
     "away_last5_points_avg",
     "home_last5_goals_for_avg",
@@ -49,340 +43,367 @@ NUMERIC_FEATURE_COLUMNS = [
     "diff_home_strength",
 ]
 
-CATEGORICAL_FEATURE_COLUMNS = [
+CURRENT_PREGAME_CATEGORICAL_COLUMNS = [
     "competition_name",
     "season_name",
 ]
 
-ALL_FEATURE_COLUMNS = NUMERIC_FEATURE_COLUMNS + CATEGORICAL_FEATURE_COLUMNS
 
+def get_database_url() -> str:
+    #database_url = os.getenv("SUPABASE_DB_URL") or os.getenv("DATABASE_URL")
+   # if database_url:
+     #   return database_url
 
-def load_training_dataframe() -> pd.DataFrame:
-    db_pool = get_db_pool()
+    dbname = os.getenv("POSTGRES_DB")
+    user = os.getenv("POSTGRES_USER")
+    password = os.getenv("POSTGRES_PASSWORD")
+    host = os.getenv("POSTGRES_HOST")
+    port = os.getenv("POSTGRES_PORT", "5432")
+    sslmode = os.getenv("POSTGRES_SSLMODE", "require")
 
-    query = """
-        SELECT
-            match_id,
-            match_date,
-            competition_name,
-            season_name,
-            home_team_id,
-            home_team_name,
-            away_team_id,
-            away_team_name,
-
-            home_last5_points_avg,
-            away_last5_points_avg,
-            home_last5_goals_for_avg,
-            away_last5_goals_for_avg,
-            home_last5_goals_against_avg,
-            away_last5_goals_against_avg,
-            home_last5_goal_diff_avg,
-            away_last5_goal_diff_avg,
-            home_home_last5_points_avg,
-            away_away_last5_points_avg,
-            home_last5_shots_avg,
-            away_last5_shots_avg,
-            home_last5_shots_on_target_avg,
-            away_last5_shots_on_target_avg,
-            home_days_since_last_match,
-            away_days_since_last_match,
-            diff_points_avg,
-            diff_goal_diff_avg,
-            diff_shots_avg,
-            diff_shots_on_target_avg,
-            diff_days_rest,
-            diff_home_strength,
-
-            CASE
-                WHEN home_score > away_score THEN 'H'
-                WHEN home_score = away_score THEN 'D'
-                ELSE 'A'
-            END AS target_result
-        FROM feature_store.match_pre_game_features
-        ORDER BY match_date, match_id
-    """
-
-    with db_pool.get_connection() as conn:
-        with conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(query)
-            rows = cur.fetchall()
-
-    if not rows:
-        raise ValueError("Nenhum dado encontrado em feature_store.match_pre_game_features.")
-
-    df = pd.DataFrame(rows)
-    df[DATE_COLUMN] = pd.to_datetime(df[DATE_COLUMN], errors="coerce")
-    return df
-
-
-def validate_dataframe(df: pd.DataFrame) -> None:
-    required_columns = {
-        "match_id",
-        DATE_COLUMN,
-        TARGET_COLUMN,
-        "competition_name",
-        "season_name",
-    }.union(ALL_FEATURE_COLUMNS)
-
-    missing_columns = [col for col in sorted(required_columns) if col not in df.columns]
-    if missing_columns:
+    if not all([dbname, user, password, host]):
         raise ValueError(
-            "Colunas ausentes no dataframe:\n- " + "\n- ".join(missing_columns)
+            "Variáveis de ambiente do banco não encontradas. "
+            "Defina SUPABASE_DB_URL ou DATABASE_URL, "
+            "ou então POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD, "
+            "POSTGRES_HOST, POSTGRES_PORT e POSTGRES_SSLMODE."
         )
 
+    return (
+        f"dbname={dbname} "
+        f"user={user} "
+        f"password={password} "
+        f"host={host} "
+        f"port={port} "
+        f"sslmode={sslmode}"
+    )
 
-def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
 
-    for col in NUMERIC_FEATURE_COLUMNS:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
+def resolve_pregame_table_name(conn: psycopg.Connection) -> str:
+    candidates = [
+        "public.match_pre_game_features",
+        "feature_store.match_pre_game_features",
+        "match_pre_game_features",
+    ]
 
-    df = df.dropna(subset=[DATE_COLUMN, TARGET_COLUMN]).copy()
-    df = df[df[TARGET_COLUMN].isin(["H", "D", "A"])].copy()
+    with conn.cursor() as cur:
+        for table_name in candidates:
+            cur.execute(
+                "SELECT to_regclass(%s) AS regclass_name",
+                (table_name,),
+            )
+            row = cur.fetchone()
 
-    # exige alguma base mínima de histórico nas features existentes
-    df = df.dropna(
-        subset=[
-            "home_last5_points_avg",
-            "away_last5_points_avg",
-            "home_days_since_last_match",
-            "away_days_since_last_match",
+            if row and row["regclass_name"]:
+                return table_name
+
+    raise ValueError(
+        "Tabela de features pré-jogo não encontrada. "
+        "Esperado um destes nomes: "
+        "public.match_pre_game_features, "
+        "feature_store.match_pre_game_features "
+        "ou match_pre_game_features."
+    )
+
+
+@dataclass
+class PreGameOddsService:
+    model_path: Path = PREGAME_MODEL_PATH
+    label_encoder_path: Path = PREGAME_LABEL_ENCODER_PATH
+    feature_columns_path: Path = PREGAME_FEATURE_COLUMNS_PATH
+    bookmaker_margin: float = BOOKMAKER_MARGIN
+
+    def __post_init__(self) -> None:
+        self.database_url = get_database_url()
+
+        print(f"[PreGameOddsService] PROJECT_DIR={PROJECT_DIR}")
+        print(f"[PreGameOddsService] model_path={self.model_path}")
+        print(f"[PreGameOddsService] model_exists={self.model_path.exists()}")
+        print(f"[PreGameOddsService] label_encoder_path={self.label_encoder_path}")
+        print(f"[PreGameOddsService] label_encoder_exists={self.label_encoder_path.exists()}")
+        print(f"[PreGameOddsService] feature_columns_path={self.feature_columns_path}")
+        print(f"[PreGameOddsService] feature_columns_exists={self.feature_columns_path.exists()}")
+
+        if not self.model_path.exists():
+            raise FileNotFoundError(f"Modelo pré-jogo não encontrado em: {self.model_path}")
+
+        if not self.label_encoder_path.exists():
+            raise FileNotFoundError(
+                f"Label encoder pré-jogo não encontrado em: {self.label_encoder_path}"
+            )
+
+        if not self.feature_columns_path.exists():
+            raise FileNotFoundError(
+                f"Arquivo de colunas de features não encontrado em: {self.feature_columns_path}"
+            )
+
+        self.model = joblib.load(self.model_path)
+        self.label_encoder = joblib.load(self.label_encoder_path)
+
+        with open(self.feature_columns_path, "r", encoding="utf-8") as f:
+            self.feature_columns: list[str] = json.load(f)
+
+        if not isinstance(self.feature_columns, list) or not self.feature_columns:
+            raise ValueError(
+                f"Arquivo de features inválido em {self.feature_columns_path}. "
+                "Esperado: lista JSON com nomes de colunas."
+            )
+
+        self.numeric_feature_columns = [
+            col for col in self.feature_columns if col in CURRENT_PREGAME_NUMERIC_COLUMNS
         ]
-    ).copy()
+        self.categorical_feature_columns = [
+            col for col in self.feature_columns if col in CURRENT_PREGAME_CATEGORICAL_COLUMNS
+        ]
 
-    if df.empty:
-        raise ValueError("Após limpeza/filtros, não restaram linhas para treino.")
+        unknown_columns = [
+            col for col in self.feature_columns
+            if col not in self.numeric_feature_columns
+            and col not in self.categorical_feature_columns
+        ]
+        if unknown_columns:
+            print(
+                "[WARN] Existem colunas no artefato que não estão mapeadas "
+                f"como numéricas/categóricas no serviço: {unknown_columns}"
+            )
 
-    return df
+        if not hasattr(self.label_encoder, "classes_"):
+            raise ValueError("label_encoder carregado não possui atributo classes_.")
 
+        print(f"[PreGameOddsService] label_encoder_classes={list(self.label_encoder.classes_)}")
 
-def temporal_split(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    df = df.sort_values([DATE_COLUMN, "match_id"]).reset_index(drop=True)
+    def get_match_probabilities(self, source_match_id: int) -> dict[str, float]:
+        features = self._fetch_features(source_match_id)
 
-    n = len(df)
-    train_end = int(n * 0.70)
-    valid_end = int(n * 0.85)
+        X = pd.DataFrame([features])
 
-    train_df = df.iloc[:train_end].copy()
-    valid_df = df.iloc[train_end:valid_end].copy()
-    test_df = df.iloc[valid_end:].copy()
+        missing_cols = [col for col in self.feature_columns if col not in X.columns]
+        if missing_cols:
+            print(
+                f"[WARN] Colunas ausentes para source_match_id={source_match_id}. "
+                f"Preenchendo com defaults: {missing_cols}"
+            )
+            for col in missing_cols:
+                if col in self.categorical_feature_columns:
+                    X[col] = "unknown"
+                else:
+                    X[col] = 0.0
 
-    return train_df, valid_df, test_df
+        X = X[self.feature_columns].copy()
 
+        for col in self.numeric_feature_columns:
+            X[col] = pd.to_numeric(X[col], errors="coerce")
 
-def build_xy(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
-    X = df[ALL_FEATURE_COLUMNS].copy()
-    y = df[TARGET_COLUMN].copy()
-    return X, y
+        for col in self.categorical_feature_columns:
+            X[col] = X[col].astype("string").fillna("unknown")
 
+        if self.numeric_feature_columns:
+            numeric_null_cols = X[self.numeric_feature_columns].columns[
+                X[self.numeric_feature_columns].isnull().any()
+            ].tolist()
+        else:
+            numeric_null_cols = []
 
-def print_dataset_summary(name: str, df: pd.DataFrame) -> None:
-    print(f"\n=== {name} ===")
-    print(f"Linhas: {len(df)}")
-    if not df.empty:
-        print(f"Período: {df[DATE_COLUMN].min().date()} até {df[DATE_COLUMN].max().date()}")
-        print("Distribuição do target:")
-        print(df[TARGET_COLUMN].value_counts(normalize=True).sort_index())
-        print("\nDistribuição por competição:")
-        print(df["competition_name"].value_counts().sort_index())
+        if numeric_null_cols:
+            print(
+                f"[WARN] Nulos encontrados nas features numéricas pré-jogo para "
+                f"source_match_id={source_match_id}. Preenchendo com 0.0: {numeric_null_cols}"
+            )
+            X[self.numeric_feature_columns] = X[self.numeric_feature_columns].fillna(0.0)
 
+        proba = self.model.predict_proba(X)[0]
+        class_labels = [str(label) for label in self.label_encoder.classes_]
+        prob_map = {label: float(prob) for label, prob in zip(class_labels, proba)}
 
-def print_null_summary(df: pd.DataFrame) -> None:
-    null_summary = df[ALL_FEATURE_COLUMNS].isnull().sum().sort_values(ascending=False)
-    null_summary = null_summary[null_summary > 0]
+        print(f"[DEBUG] source_match_id={source_match_id}")
+        print(f"[DEBUG] class_labels={class_labels}")
+        print(f"[DEBUG] raw_proba={proba.tolist()}")
+        print(f"[DEBUG] prob_map={prob_map}")
+        print(f"[DEBUG] X_row={X.iloc[0].to_dict()}")
 
-    print("\n=== Nulos por feature ===")
-    if null_summary.empty:
-        print("Nenhum nulo encontrado nas features.")
-    else:
-        print(null_summary.to_string())
+        total_prob = sum(prob_map.values())
 
+        if total_prob <= 0:
+            raise ValueError(
+                f"Modelo retornou probabilidades inválidas para source_match_id={source_match_id}: {prob_map}"
+            )
 
-def evaluate_split(
-    name: str,
-    pipeline: Pipeline,
-    X: pd.DataFrame,
-    y_true_encoded,
-    label_encoder: LabelEncoder,
-) -> dict:
-    y_pred_encoded = pipeline.predict(X)
+        if abs(total_prob - 1.0) > 0.05:
+            print(
+                f"[WARN] Soma das probabilidades fora do esperado para "
+                f"source_match_id={source_match_id}: total={total_prob}, probs={prob_map}"
+            )
 
-    acc = accuracy_score(y_true_encoded, y_pred_encoded)
-    bal_acc = balanced_accuracy_score(y_true_encoded, y_pred_encoded)
-
-    y_true = label_encoder.inverse_transform(y_true_encoded)
-    y_pred = label_encoder.inverse_transform(y_pred_encoded)
-
-    print(f"\n=== Avaliação: {name} ===")
-    print(f"Accuracy: {acc:.4f}")
-    print(f"Balanced accuracy: {bal_acc:.4f}")
-    print("\nClassification report:")
-    print(classification_report(y_true, y_pred, digits=4))
-    print("Confusion matrix:")
-    print(confusion_matrix(y_true, y_pred, labels=["A", "D", "H"]))
-
-    return {
-        "accuracy": float(acc),
-        "balanced_accuracy": float(bal_acc),
-    }
-
-
-def get_feature_importances(pipeline: Pipeline) -> pd.DataFrame:
-    preprocessor: ColumnTransformer = pipeline.named_steps["preprocessor"]
-    model: RandomForestClassifier = pipeline.named_steps["model"]
-
-    encoded_feature_names = preprocessor.get_feature_names_out()
-    importances = model.feature_importances_
-
-    return pd.DataFrame(
-        {
-            "feature": encoded_feature_names,
-            "importance": importances,
+        return {
+            "H": float(prob_map.get("H", 0.0)),
+            "D": float(prob_map.get("D", 0.0)),
+            "A": float(prob_map.get("A", 0.0)),
         }
-    ).sort_values("importance", ascending=False)
 
+    def get_main_market_odds(self, source_match_id: int) -> dict[str, Any]:
+        probs = self.get_match_probabilities(source_match_id)
 
-def save_artifacts(
-    pipeline: Pipeline,
-    label_encoder: LabelEncoder,
-    feature_importances: pd.DataFrame,
-    metrics: dict,
-    ) -> None:
-    ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+        fair_home = self._prob_to_fair_odd(probs["H"])
+        fair_draw = self._prob_to_fair_odd(probs["D"])
+        fair_away = self._prob_to_fair_odd(probs["A"])
 
-    joblib.dump(pipeline, ARTIFACT_DIR / "pipeline.joblib")
-    joblib.dump(label_encoder, ARTIFACT_DIR / "label_encoder.joblib")
+        return {
+            "probabilities": probs,
+            "fair_odds": {"H": fair_home, "D": fair_draw, "A": fair_away},
+            "market_odds": {
+                "H": self._fair_to_market_odd(fair_home),
+                "D": self._fair_to_market_odd(fair_draw),
+                "A": self._fair_to_market_odd(fair_away),
+            },
+        }
 
-    with open(ARTIFACT_DIR / "numeric_feature_columns.json", "w", encoding="utf-8") as f:
-        json.dump(NUMERIC_FEATURE_COLUMNS, f, ensure_ascii=False, indent=2)
+    def build_markets_from_model(
+        self,
+        source_match_id: int,
+        home_team: str,
+        away_team: str,
+    ) -> list[dict[str, Any]]:
+        probs = self.get_match_probabilities(source_match_id)
 
-    with open(ARTIFACT_DIR / "categorical_feature_columns.json", "w", encoding="utf-8") as f:
-        json.dump(CATEGORICAL_FEATURE_COLUMNS, f, ensure_ascii=False, indent=2)
+        fair_home = self._prob_to_fair_odd(probs["H"])
+        fair_draw = self._prob_to_fair_odd(probs["D"])
+        fair_away = self._prob_to_fair_odd(probs["A"])
 
-    with open(ARTIFACT_DIR / "all_feature_columns.json", "w", encoding="utf-8") as f:
-        json.dump(ALL_FEATURE_COLUMNS, f, ensure_ascii=False, indent=2)
+        market_home = self._fair_to_market_odd(fair_home)
+        market_draw = self._fair_to_market_odd(fair_draw)
+        market_away = self._fair_to_market_odd(fair_away)
 
-    with open(ARTIFACT_DIR / "metrics.json", "w", encoding="utf-8") as f:
-        json.dump(metrics, f, ensure_ascii=False, indent=2)
+        p_home_draw = min(probs["H"] + probs["D"], 0.999999)
+        fair_home_draw = self._prob_to_fair_odd(p_home_draw)
+        market_home_draw = self._fair_to_market_odd(fair_home_draw)
 
-    feature_importances.to_csv(ARTIFACT_DIR / "feature_importances.csv", index=False)
+        p_over_2_5_goals = max(0.20, min(0.80, 0.35 + 0.25 * probs["H"] + 0.20 * probs["A"]))
+        fair_over_2_5_goals = self._prob_to_fair_odd(p_over_2_5_goals)
+        market_over_2_5_goals = self._fair_to_market_odd(fair_over_2_5_goals)
 
-    print(f"\nArtefatos salvos em: {ARTIFACT_DIR.resolve()}")
-
-
-def main() -> None:
-    df = load_training_dataframe()
-    print(f"Total de linhas carregadas: {len(df)}")
-
-    validate_dataframe(df)
-    df = clean_dataframe(df)
-
-    print(f"\nTotal de linhas após filtros: {len(df)}")
-    print("\n=== Distribuição inicial por competição ===")
-    print(df["competition_name"].value_counts().sort_index().to_string())
-    print_null_summary(df)
-
-    train_df, valid_df, test_df = temporal_split(df)
-
-    print_dataset_summary("TRAIN", train_df)
-    print_dataset_summary("VALID", valid_df)
-    print_dataset_summary("TEST", test_df)
-
-    X_train, y_train = build_xy(train_df)
-    X_valid, y_valid = build_xy(valid_df)
-    X_test, y_test = build_xy(test_df)
-
-    label_encoder = LabelEncoder()
-    y_train_enc = label_encoder.fit_transform(y_train)
-    y_valid_enc = label_encoder.transform(y_valid)
-    y_test_enc = label_encoder.transform(y_test)
-
-    print("\nClasses do target:", list(label_encoder.classes_))
-
-    numeric_transformer = Pipeline(
-        steps=[
-            ("imputer", SimpleImputer(strategy="median")),
+        return [
+            {
+                "market_type": "1x2",
+                "market_name": "Resultado Final",
+                "options": [
+                    {
+                        "selection_key": "home",
+                        "selection_label": f"{home_team} vence",
+                        "market_odd": market_home,
+                        "model_odd": fair_home,
+                        "model_probability": round(probs["H"], 6),
+                        "edge_pct": self._edge_pct(fair_home, market_home),
+                        "risk_level": "medio",
+                    },
+                    {
+                        "selection_key": "draw",
+                        "selection_label": "Empate",
+                        "market_odd": market_draw,
+                        "model_odd": fair_draw,
+                        "model_probability": round(probs["D"], 6),
+                        "edge_pct": self._edge_pct(fair_draw, market_draw),
+                        "risk_level": "medio",
+                    },
+                    {
+                        "selection_key": "away",
+                        "selection_label": f"{away_team} vence",
+                        "market_odd": market_away,
+                        "model_odd": fair_away,
+                        "model_probability": round(probs["A"], 6),
+                        "edge_pct": self._edge_pct(fair_away, market_away),
+                        "risk_level": "alto",
+                    },
+                ],
+            },
+            {
+                "market_type": "double_chance",
+                "market_name": "Dupla Chance",
+                "options": [
+                    {
+                        "selection_key": "home_draw",
+                        "selection_label": f"{home_team} ou empate",
+                        "market_odd": market_home_draw,
+                        "model_odd": fair_home_draw,
+                        "model_probability": round(p_home_draw, 6),
+                        "edge_pct": self._edge_pct(fair_home_draw, market_home_draw),
+                        "risk_level": "baixo",
+                    }
+                ],
+            },
+            {
+                "market_type": "total_goals",
+                "market_name": "Total de Gols",
+                "options": [
+                    {
+                        "selection_key": "over_2_5_goals",
+                        "selection_label": "Mais de 2.5 gols",
+                        "market_odd": market_over_2_5_goals,
+                        "model_odd": fair_over_2_5_goals,
+                        "model_probability": round(p_over_2_5_goals, 6),
+                        "edge_pct": self._edge_pct(fair_over_2_5_goals, market_over_2_5_goals),
+                        "risk_level": "medio",
+                    }
+                ],
+            },
         ]
-    )
 
-    categorical_transformer = Pipeline(
-        steps=[
-            ("imputer", SimpleImputer(strategy="most_frequent")),
-            ("onehot", OneHotEncoder(handle_unknown="ignore")),
-        ]
-    )
+    def _fetch_features(self, source_match_id: int) -> dict[str, Any]:
+        with psycopg.connect(self.database_url, row_factory=dict_row) as conn:
+            table_name = resolve_pregame_table_name(conn)
 
-    preprocessor = ColumnTransformer(
-        transformers=[
-            ("num", numeric_transformer, NUMERIC_FEATURE_COLUMNS),
-            ("cat", categorical_transformer, CATEGORICAL_FEATURE_COLUMNS),
-        ]
-    )
+            selected_cols_sql = ", ".join(
+                [f'"{col}"' for col in self.feature_columns if col != "match_id"] + ['"match_id"']
+            )
 
-    model = RandomForestClassifier(
-        n_estimators=500,
-        max_depth=10,
-        min_samples_leaf=4,
-        random_state=42,
-        n_jobs=-1,
-        class_weight="balanced_subsample",
-    )
+            query = f"""
+            SELECT {selected_cols_sql}
+            FROM {table_name}
+            WHERE match_id = %s
+            LIMIT 1;
+            """
 
-    pipeline = Pipeline(
-        steps=[
-            ("preprocessor", preprocessor),
-            ("model", model),
-        ]
-    )
+            with conn.cursor() as cur:
+                cur.execute(query, (source_match_id,))
+                row = cur.fetchone()
 
-    print("\nTreinando modelo pré-game com as colunas atuais do banco...")
-    pipeline.fit(X_train, y_train_enc)
+        if not row:
+            raise ValueError(
+                f"Features pré-jogo não encontradas para source_match_id={source_match_id}"
+            )
 
-    valid_metrics = evaluate_split(
-        "VALID",
-        pipeline,
-        X_valid,
-        y_valid_enc,
-        label_encoder,
-    )
+        data = dict(row)
 
-    test_metrics = evaluate_split(
-        "TEST",
-        pipeline,
-        X_test,
-        y_test_enc,
-        label_encoder,
-    )
+        for key, value in list(data.items()):
+            if key in self.numeric_feature_columns:
+                if value is None:
+                    data[key] = 0.0
+                elif isinstance(value, (int, float)):
+                    data[key] = float(value)
+            elif key in self.categorical_feature_columns:
+                if value is None or str(value).strip() == "":
+                    data[key] = "unknown"
+                else:
+                    data[key] = str(value)
 
-    feature_importances = get_feature_importances(pipeline)
+        return data
 
-    print("\n=== Top 30 importâncias ===")
-    print(feature_importances.head(30).to_string(index=False))
+    @staticmethod
+    def _prob_to_fair_odd(prob: float) -> float:
+        if prob is None or prob <= 0.0:
+            raise ValueError(f"Probabilidade inválida para cálculo de odd: {prob}")
 
-    metrics = {
-        "valid": valid_metrics,
-        "test": test_metrics,
-        "n_rows_total": int(len(df)),
-        "n_rows_train": int(len(train_df)),
-        "n_rows_valid": int(len(valid_df)),
-        "n_rows_test": int(len(test_df)),
-        "classes": list(label_encoder.classes_),
-        "feature_count_numeric": len(NUMERIC_FEATURE_COLUMNS),
-        "feature_count_categorical": len(CATEGORICAL_FEATURE_COLUMNS),
-        "feature_count_total": len(ALL_FEATURE_COLUMNS),
-        "model_name": "RandomForestClassifier",
-        "target_column": TARGET_COLUMN,
-        "source_table": "feature_store.match_pre_game_features",
-    }
+        prob = min(prob, 0.999999)
+        odd = 1.0 / prob
+        odd = min(odd, 1000.0)
+        return round(odd, 2)
 
-    save_artifacts(
-        pipeline=pipeline,
-        label_encoder=label_encoder,
-        feature_importances=feature_importances,
-        metrics=metrics,
-    )
+    def _fair_to_market_odd(self, fair_odd: float) -> float:
+        fair_prob = 1.0 / fair_odd
+        market_prob = fair_prob * (1.0 + self.bookmaker_margin)
+        odd = max(1.0 / market_prob, 1.01)
+        odd = min(odd, 1000.0)
+        return round(odd, 2)
 
-
-if __name__ == "__main__":
-    main()
+    @staticmethod
+    def _edge_pct(model_fair_odd: float, market_odd: float) -> float:
+        return round(((market_odd - model_fair_odd) / market_odd) * 100.0, 4)
