@@ -19,14 +19,6 @@ SOURCE_CONFIG = {
 }
 
 # ===== BANCO DESTINO (SUPABASE) =====
-TARGET_CONFIG = {
-    "dbname": "postgres",
-    "user": "postgres.yasolpxtikysbpjhwxqg",
-    "password": "M&PFYHSJpu%5Aj",
-    "host": "aws-1-us-east-1.pooler.supabase.com",
-    "port": 5432,
-    "sslmode": "require",
-}
 
 LIMIT_MATCHES = 10
 

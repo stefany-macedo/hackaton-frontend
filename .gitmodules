@@ -1,0 +1,3 @@
+[submodule "Hackathon-Agents-backend"]
+	path = Hackathon-Agents-backend
+	url = https://github.com/guiguilins/Hackathon-Agents-backend.git
