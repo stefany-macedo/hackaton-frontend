@@ -1,0 +1,25 @@
+{
+  "valid": {
+    "accuracy": 0.45045045045045046,
+    "balanced_accuracy": 0.4152046783625731
+  },
+  "test": {
+    "accuracy": 0.4774774774774775,
+    "balanced_accuracy": 0.4410726154868727
+  },
+  "n_rows_total": 1477,
+  "n_rows_train": 1033,
+  "n_rows_valid": 222,
+  "n_rows_test": 222,
+  "classes": [
+    "A",
+    "D",
+    "H"
+  ],
+  "feature_count_numeric": 22,
+  "feature_count_categorical": 2,
+  "feature_count_total": 24,
+  "model_name": "RandomForestClassifier",
+  "target_column": "target_result",
+  "source_table": "feature_store.match_pre_game_features"
+}
