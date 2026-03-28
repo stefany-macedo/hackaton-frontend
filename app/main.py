@@ -13,6 +13,9 @@ from app.services.pregame_odds_service import PreGameOddsService
 from app.services.recommendation_service import RecommendationService
 from app.services.user_profile_service import UserProfileService
 from app.services.match_sync_service import MatchSyncService
+from app.services.agent_service import OddsAgentService
+from typing import List, Optional
+from pydantic import BaseModel
 
 Base.metadata.create_all(bind=engine)
 
@@ -25,7 +28,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 def extract_source_match_id(match_obj) -> int:
     source_match_id = getattr(match_obj, "source_match_id", None)
@@ -514,3 +516,40 @@ def create_bet(payload: BetRequest, db: Session = Depends(get_db)):
         "status": "confirmed",
         "potential_payout": potential_payout,
     }
+
+class ChatRequest(BaseModel):
+    user_id: str
+    match_id: Optional[str] = None
+    message: str
+    coupon_matches: Optional[List[str]] = []
+
+@app.post("/assistant/chat")
+def chat_with_agent(payload: ChatRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == payload.user_id).first()
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado.")
+    
+    perfil_risco = user.risk_profile or "MODERADO"
+
+    jogos_brutos = get_live_games(db)
+    
+    jogos_limpos = []
+    for j in jogos_brutos:
+        jogos_limpos.append({
+            "partida": f"{j['team1']} x {j['team2']}",
+            "placar": f"{j['score1']} - {j['score2']}",
+            "tempo_minutos": j['time'],
+            "odd_vitoria_casa": j['o1'],
+            "odd_empate": j['ox'],
+            "odd_vitoria_visitante": j['o2']
+        })
+
+    agent_service = OddsAgentService()
+    resposta_ia = agent_service.get_best_odds(
+        user_profile=perfil_risco,
+        question=payload.message,
+        live_games=jogos_limpos 
+    )
+
+    return {"answer": resposta_ia}

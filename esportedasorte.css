@@ -1195,3 +1195,9 @@
     bottom: 90px;
   }
 }
+
+#fox-dash-matches, 
+#fox-extra-tickets,
+.fox-dash-lead {
+    display: none !important;
+}

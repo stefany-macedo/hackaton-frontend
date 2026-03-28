@@ -814,25 +814,72 @@ const FoxAssistant = (() => {
       return;
     }
 
+    const story = $('fox-dash-story');
+    if (!story) return;
+
+    // 1. Coloca a SUA pergunta na tela (Alinhado à direita)
+    story.innerHTML += `
+      <div style="margin-top: 16px; text-align: right;">
+        <span style="font-size: 11px; color: var(--text-muted); text-transform: uppercase;">Você</span>
+        <p class="fox-story-text" style="background: rgba(255,255,255,0.05); border-radius: 8px; padding: 12px; display: inline-block; margin-top: 4px; border: 1px solid rgba(255,255,255,0.1);">
+          ${message}
+        </p>
+      </div>
+    `;
+
+    // 2. Coloca o status de "Digitando / Pensando" da Raposa
+    const loadingId = 'loading-' + Date.now();
+    story.innerHTML += `
+      <div id="${loadingId}" style="margin-top: 16px; text-align: left;">
+        <span style="font-size: 11px; color: var(--green); font-weight: bold; text-transform: uppercase;">🦊 Raposa da Sorte</span>
+        <p class="fox-story-text" style="margin-top: 4px; color: var(--text-muted); font-style: italic;">
+          Analisando o banco de dados e calculando odds...
+        </p>
+      </div>
+    `;
+
+    // Desce a barra de rolagem pro final pra acompanhar o chat
+    const panel = document.querySelector('.fox-dash-scroll');
+    if (panel) panel.scrollTop = panel.scrollHeight;
+
+    // 3. Manda pro seu FastAPI (LangChain)
     const res = await ApiService.assistantChat({
       user_id: user.id,
       match_id: StateManager.getCurrentMatchId(),
-      message,
+      message: message,
       coupon_matches: StateManager.getBets().map(b => b.gameId),
     });
 
-    if (!res.success) {
-      UI.showToast(res.error || 'A Raposa não conseguiu responder.');
-      return;
-    }
+    // 4. Remove o aviso de "Pensando..."
+    const loadingEl = document.getElementById(loadingId);
+    if (loadingEl) loadingEl.remove();
 
-    const story = $('fox-dash-story');
-    if (story) {
-      story.innerHTML = `
-        <span class="fox-story-title">Raposa da Sorte</span>
-        <p class="fox-story-text">${res.data.answer}</p>
+    // 5. Cospe a resposta final na tela!
+if (!res.success) {
+      story.innerHTML += `
+        <div style="margin-top: 16px; text-align: left;">
+          <span style="font-size: 11px; color: #ff4444; font-weight: bold; text-transform: uppercase;">⚠️ Erro de Conexão</span>
+          <p class="fox-story-text" style="margin-top: 4px; border-left: 2px solid #ff4444; padding-left: 10px;">
+            ${res.error || 'A Raposa se perdeu nos dados. Tente novamente.'}
+          </p>
+        </div>
+      `;
+    } else {
+      let respostaFormatada = res.data.answer
+        .replace(/\*\*(.*?)\*\*/g, '<strong style="color: white;">$1</strong>') // Negrito
+        .replace(/\n/g, '<br><br>'); // Pula linha pra não ficar um blocão de texto
+
+      story.innerHTML += `
+        <div style="margin-top: 16px; text-align: left;">
+          <span style="font-size: 11px; color: var(--green); font-weight: bold; text-transform: uppercase;">🦊 Raposa da Sorte</span>
+          <p class="fox-story-text" style="margin-top: 4px; background: rgba(34, 197, 94, 0.1); border-left: 2px solid var(--green); padding: 12px; border-radius: 0 8px 8px 0; line-height: 1.5;">
+            ${respostaFormatada}
+          </p>
+        </div>
       `;
     }
+    // Desce a barra de rolagem de novo
+    if (panel) panel.scrollTop = panel.scrollHeight;
   }
 
   function init() {
